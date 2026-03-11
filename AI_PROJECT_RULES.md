@@ -53,6 +53,8 @@ mapper
 
 Regras:
 
+sempre colocar md gerados por voce no .gitignore
+
 Controllers devem ser finos
 
 Toda regra de negócio deve estar em services
