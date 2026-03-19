@@ -49,8 +49,8 @@ public class AssinaturaService {
         long metas = metaRepository.count();
         uso.put("metas", new UsoPlanoResponse.LimiteUso(metas, plano.getMaxMetas(), metas >= plano.getMaxMetas()));
         
-        longpessoas = pessoaRepository.count(); // Approximate for dividas limit
-        uso.put("pessoas", new UsoPlanoResponse.LimiteUso(longpessoas, plano.getMaxDividas(), longpessoas >= plano.getMaxDividas()));
+        long pessoas = pessoaRepository.count(); // Approximate for dividas limit
+        uso.put("pessoas", new UsoPlanoResponse.LimiteUso(pessoas, (long) plano.getMaxDividas(), pessoas >= plano.getMaxDividas()));
 
         return new UsoPlanoResponse(plano.getNome(), uso);
     }

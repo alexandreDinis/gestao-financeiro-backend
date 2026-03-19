@@ -31,7 +31,6 @@ import java.time.LocalDate;
 @Slf4j
 public class AuthService {
 
-    private final EmiteLedgerService emiteLedgerService; // Pode ser injetado, mas aqui criaremos via repository
     private final TenantRepository tenantRepository;
     private final UsuarioRepository usuarioRepository;
     private final PlanoRepository planoRepository;

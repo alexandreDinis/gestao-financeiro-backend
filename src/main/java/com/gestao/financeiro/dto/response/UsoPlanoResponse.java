@@ -6,5 +6,5 @@ public record UsoPlanoResponse(
         String planoNome,
         Map<String, LimiteUso> limites
 ) {
-    public record LimiteUso(long usoAtual, int limiteMaximo, boolean excedido) {}
+    public record LimiteUso(long usoAtual, long limiteMaximo, boolean excedido) {}
 }

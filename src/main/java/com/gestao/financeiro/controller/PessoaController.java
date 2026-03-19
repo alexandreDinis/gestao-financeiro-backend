@@ -6,10 +6,11 @@ import com.gestao.financeiro.dto.response.PessoaResponse;
 import com.gestao.financeiro.service.PessoaService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/pessoas")
@@ -19,7 +20,7 @@ public class PessoaController {
     private final PessoaService pessoaService;
 
     @GetMapping
-    public ApiResponse<Page<PessoaResponse>> listar(Pageable pageable) {
+    public ApiResponse<List<PessoaResponse>> listar(Pageable pageable) {
         return ApiResponse.ok(pessoaService.listar(pageable));
     }
 

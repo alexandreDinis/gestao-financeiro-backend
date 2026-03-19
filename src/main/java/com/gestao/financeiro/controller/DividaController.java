@@ -9,10 +9,11 @@ import com.gestao.financeiro.entity.enums.TipoDivida;
 import com.gestao.financeiro.service.DividaService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/dividas")
@@ -22,7 +23,7 @@ public class DividaController {
     private final DividaService dividaService;
 
     @GetMapping
-    public ApiResponse<Page<DividaResponse>> listar(
+    public ApiResponse<List<DividaResponse>> listar(
             @RequestParam(required = false) TipoDivida tipo,
             Pageable pageable) {
         return ApiResponse.ok(dividaService.listar(tipo, pageable));

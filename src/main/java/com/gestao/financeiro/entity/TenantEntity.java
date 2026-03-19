@@ -1,5 +1,6 @@
 package com.gestao.financeiro.entity;
 
+import com.gestao.financeiro.config.TenantContext;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -7,8 +8,6 @@ import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.Where;
-
-/**
 
 @MappedSuperclass
 @Getter
