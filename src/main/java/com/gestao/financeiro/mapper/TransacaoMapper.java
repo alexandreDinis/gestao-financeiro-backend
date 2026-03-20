@@ -33,6 +33,7 @@ public class TransacaoMapper {
                 entity.getDataVencimento(),
                 entity.getDataPagamento(),
                 entity.getTipo(),
+                entity.getTipoDespesa(),
                 entity.getStatus(),
                 entity.getObservacao(),
                 categoriaResp,

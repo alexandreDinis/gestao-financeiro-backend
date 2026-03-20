@@ -1,6 +1,7 @@
 package com.gestao.financeiro.dto.request;
 
 import com.gestao.financeiro.entity.enums.TipoTransacao;
+import com.gestao.financeiro.entity.enums.TipoDespesa;
 import jakarta.validation.constraints.*;
 
 import java.math.BigDecimal;
@@ -21,6 +22,8 @@ public record TransacaoRequest(
 
         @NotNull(message = "Tipo é obrigatório")
         TipoTransacao tipo,
+
+        TipoDespesa tipoDespesa,
 
         Long categoriaId,
 

@@ -27,4 +27,9 @@ public class AuthController {
     public ApiResponse<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
         return ApiResponse.ok(authService.login(request));
     }
+
+    @GetMapping("/me")
+    public ApiResponse<com.gestao.financeiro.dto.response.UsuarioResponse> me() {
+        return ApiResponse.ok(authService.me());
+    }
 }

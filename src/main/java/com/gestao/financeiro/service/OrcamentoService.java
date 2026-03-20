@@ -78,6 +78,7 @@ public class OrcamentoService {
                     : 0;
 
             return new OrcamentoResumoResponse(
+                    orc.getId(),
                     orc.getCategoria().getId(),
                     orc.getCategoria().getNome(),
                     orc.getCategoria().getCor(),

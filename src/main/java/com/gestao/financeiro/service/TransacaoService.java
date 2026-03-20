@@ -6,6 +6,7 @@ import com.gestao.financeiro.entity.*;
 import com.gestao.financeiro.entity.enums.DirecaoLancamento;
 import com.gestao.financeiro.entity.enums.StatusTransacao;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
+import com.gestao.financeiro.entity.enums.TipoDespesa;
 import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.TransacaoMapper;
@@ -38,11 +39,12 @@ public class TransacaoService {
     public Page<TransacaoResponse> listar(
             LocalDate dataInicio, LocalDate dataFim,
             Long categoriaId, Long contaId,
-            TipoTransacao tipo, StatusTransacao status,
+            TipoTransacao tipo, TipoDespesa tipoDespesa,
+            StatusTransacao status, Boolean geradoAutomaticamente,
             Pageable pageable) {
 
         return transacaoRepository.buscarComFiltros(
-                dataInicio, dataFim, categoriaId, contaId, tipo, status, pageable
+                dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, pageable
         ).map(transacaoMapper::toResponse);
     }
 
@@ -94,6 +96,7 @@ public class TransacaoService {
                 .data(request.data())
                 .dataVencimento(request.dataVencimento())
                 .tipo(request.tipo())
+                .tipoDespesa(request.tipoDespesa())
                 .status(StatusTransacao.PENDENTE)
                 .observacao(request.observacao())
                 .idempotencyKey(request.idempotencyKey())
@@ -230,6 +233,20 @@ public class TransacaoService {
         transacao.softDelete();
         transacaoRepository.save(transacao);
         log.info("[tenant={}] Transação soft-deleted: id={}", transacao.getTenantId(), id);
+    }
+
+    @Transactional
+    public TransacaoResponse tornarManual(Long id) {
+        Transacao t = findById(id);
+        if (!t.getGeradoAutomaticamente()) {
+            throw new BusinessException("Transação já é manual.");
+        }
+        
+        t.setGeradoAutomaticamente(false);
+        t.setRecorrenciaId(null);
+        t.setReferencia(null);
+        
+        return transacaoMapper.toResponse(transacaoRepository.save(t));
     }
 
     private Transacao findById(Long id) {

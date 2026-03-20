@@ -2,6 +2,7 @@ package com.gestao.financeiro.dto.response;
 
 import com.gestao.financeiro.entity.enums.StatusTransacao;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
+import com.gestao.financeiro.entity.enums.TipoDespesa;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -16,6 +17,7 @@ public record TransacaoResponse(
         LocalDate dataVencimento,
         LocalDate dataPagamento,
         TipoTransacao tipo,
+        TipoDespesa tipoDespesa,
         StatusTransacao status,
         String observacao,
         CategoriaResponse categoria,

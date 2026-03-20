@@ -109,4 +109,19 @@ public class AuthService {
         String token = tokenProvider.generateToken(usuario);
         return new AuthResponse(token, "Bearer", usuarioMapper.toResponse(usuario));
     }
+
+    @Transactional(readOnly = true)
+    public com.gestao.financeiro.dto.response.UsuarioResponse me() {
+        org.springframework.security.core.Authentication authentication = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() || "anonymousUser".equals(authentication.getPrincipal())) {
+            throw new BusinessException("Usuário não autenticado");
+        }
+
+        com.gestao.financeiro.security.AuthPrincipal principal = (com.gestao.financeiro.security.AuthPrincipal) authentication.getPrincipal();
+
+        Usuario usuario = usuarioRepository.findById(principal.getId())
+                .orElseThrow(() -> new BusinessException("Usuário não encontrado"));
+
+        return usuarioMapper.toResponse(usuario);
+    }
 }

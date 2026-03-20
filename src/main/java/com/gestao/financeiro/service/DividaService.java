@@ -128,11 +128,12 @@ public class DividaService {
                 dataPag,
                 parcela.getDataVencimento(),
                 tipoTx,
+                null, // tipoDespesa
                 categoria != null ? categoria.getId() : null,
                 conta.getId(),
-                null,
+                null, // contaDestinoId
                 "Pagamento da parcela " + parcela.getNumeroParcela() + " da dívida ID " + divida.getId(),
-                null
+                null // idempotencyKey
         );
 
         com.gestao.financeiro.dto.response.TransacaoResponse txResponse = transacaoService.criar(txRequest);

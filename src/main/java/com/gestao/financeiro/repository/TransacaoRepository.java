@@ -3,6 +3,7 @@ package com.gestao.financeiro.repository;
 import com.gestao.financeiro.entity.Transacao;
 import com.gestao.financeiro.entity.enums.StatusTransacao;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
+import com.gestao.financeiro.entity.enums.TipoDespesa;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,12 +12,15 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.Optional;
 
 @Repository
 public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
 
     Optional<Transacao> findByIdempotencyKey(String idempotencyKey);
+
+    boolean existsByRecorrenciaIdAndReferencia(Long recorrenciaId, YearMonth referencia);
 
     @Query("""
         SELECT t FROM Transacao t
@@ -29,7 +33,9 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
                 SELECT l FROM Lancamento l WHERE l.transacao = t AND l.conta.id = :contaId
           ))
           AND (:tipo IS NULL OR t.tipo = :tipo)
+          AND (:tipoDespesa IS NULL OR t.tipoDespesa = :tipoDespesa)
           AND (:status IS NULL OR t.status = :status)
+          AND (:geradoAutomaticamente IS NULL OR t.geradoAutomaticamente = :geradoAutomaticamente)
     """)
     Page<Transacao> buscarComFiltros(
             @Param("dataInicio") LocalDate dataInicio,
@@ -37,7 +43,9 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
             @Param("categoriaId") Long categoriaId,
             @Param("contaId") Long contaId,
             @Param("tipo") TipoTransacao tipo,
+            @Param("tipoDespesa") TipoDespesa tipoDespesa,
             @Param("status") StatusTransacao status,
+            @Param("geradoAutomaticamente") Boolean geradoAutomaticamente,
             Pageable pageable);
 
     long countByTenantIdAndDataBetween(Long tenantId, LocalDate dataInicio, LocalDate dataFim);

@@ -8,5 +8,6 @@ import java.util.Optional;
 
 @Repository
 public interface AssinaturaRepository extends JpaRepository<Assinatura, Long> {
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"plano"})
     Optional<Assinatura> findByTenantId(Long tenantId);
 }

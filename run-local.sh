@@ -16,4 +16,14 @@ sleep 5
 
 # Iniciar a aplicação Spring Boot localmente usando o profile dev
 echo "☕ Iniciando o Spring Boot (profile: dev)..."
-mvn spring-boot:run -Dspring-boot.run.profiles=dev
+
+if [ -f "./mvnw" ]; then
+  MVN_CMD="./mvnw"
+elif command -v mvn &> /dev/null; then
+  MVN_CMD="mvn"
+else
+  echo "❌ Erro: Maven não encontrado! Instale o Maven ou gere o wrapper com: mvn -N wrapper:wrapper"
+  exit 1
+fi
+
+$MVN_CMD spring-boot:run -Dspring-boot.run.profiles=dev

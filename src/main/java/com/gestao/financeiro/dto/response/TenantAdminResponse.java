@@ -8,7 +8,7 @@ public record TenantAdminResponse(
         String nome,
         String subdominio,
         String status,
-        LocalDateTime criadoEm,
-        String planoAtual,
+        LocalDateTime createdAt,
+        String plano,
         BigDecimal mrr
 ) {}

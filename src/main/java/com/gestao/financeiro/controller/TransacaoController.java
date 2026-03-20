@@ -5,6 +5,7 @@ import com.gestao.financeiro.dto.response.ApiResponse;
 import com.gestao.financeiro.dto.response.TransacaoResponse;
 import com.gestao.financeiro.entity.enums.StatusTransacao;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
+import com.gestao.financeiro.entity.enums.TipoDespesa;
 import com.gestao.financeiro.service.TransacaoService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -30,10 +31,16 @@ public class TransacaoController {
             @RequestParam(required = false) Long categoriaId,
             @RequestParam(required = false) Long contaId,
             @RequestParam(required = false) TipoTransacao tipo,
+            @RequestParam(required = false) TipoDespesa tipoDespesa,
             @RequestParam(required = false) StatusTransacao status,
+            @RequestParam(required = false) String origem,
             Pageable pageable) {
+        Boolean geradoAutomaticamente = null;
+        if ("AUTOMATICA".equalsIgnoreCase(origem)) geradoAutomaticamente = true;
+        else if ("MANUAL".equalsIgnoreCase(origem)) geradoAutomaticamente = false;
+
         return ApiResponse.ok(transacaoService.listar(
-                dataInicio, dataFim, categoriaId, contaId, tipo, status, pageable));
+                dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, pageable));
     }
 
     @GetMapping("/{id}")
@@ -61,5 +68,10 @@ public class TransacaoController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deletar(@PathVariable Long id) {
         transacaoService.deletar(id);
+    }
+
+    @PatchMapping("/{id}/tornar-manual")
+    public ApiResponse<TransacaoResponse> tornarManual(@PathVariable Long id) {
+        return ApiResponse.ok(transacaoService.tornarManual(id));
     }
 }
