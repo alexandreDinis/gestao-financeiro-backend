@@ -11,6 +11,7 @@ import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.repository.*;
 import lombok.RequiredArgsConstructor;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -22,6 +23,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.TemporalAdjusters;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -34,8 +36,8 @@ public class CartaoCreditoService {
     private final ContaRepository contaRepository;
     private final CategoriaRepository categoriaRepository;
     private final FaturaCartaoRepository faturaRepository;
-    private final ParcelaRepository parcelaRepository;
     private final TransacaoRepository transacaoRepository;
+    private final com.gestao.financeiro.provider.DateProvider dateProvider;
 
     private static final Long DEFAULT_TENANT_ID = 1L;
 
@@ -51,16 +53,16 @@ public class CartaoCreditoService {
 
     @Transactional
     public CartaoCreditoResponse criarCartao(CartaoCreditoRequest request) {
-        Conta conta = contaRepository.findById(request.contaId())
-                .orElseThrow(() -> new ResourceNotFoundException("Conta", request.contaId()));
-
-        if (conta.getTipo() != TipoConta.CARTAO_CREDITO) {
-            throw new BusinessException("A conta deve ser do tipo CARTAO_CREDITO.");
-        }
-
-        if (cartaoRepository.existsByContaId(request.contaId())) {
-            throw new BusinessException("Esta conta já está vinculada a um cartão.");
-        }
+        
+        // Criar a conta passiva do cartão automaticamente
+        Conta conta = Conta.builder()
+                .nome(request.nomeCartao())
+                .tipo(TipoConta.CARTAO_CREDITO)
+                .saldoInicial(BigDecimal.ZERO)
+                .ativa(true)
+                .build();
+        conta.setTenantId(DEFAULT_TENANT_ID);
+        conta = contaRepository.save(conta);
 
         CartaoCredito cartao = CartaoCredito.builder()
                 .conta(conta)
@@ -73,6 +75,26 @@ public class CartaoCreditoService {
 
         cartao = cartaoRepository.save(cartao);
         log.info("[tenant={}] Cartão criado: id={} bandeira={}", DEFAULT_TENANT_ID, cartao.getId(), cartao.getBandeira());
+
+        return toCartaoResponse(cartao);
+    }
+
+    @Transactional
+    public CartaoCreditoResponse editarCartao(Long id, CartaoCreditoRequest request) {
+        CartaoCredito cartao = findCartaoById(id);
+
+        cartao.setBandeira(request.bandeira());
+        cartao.setLimite(request.limite());
+        cartao.setDiaFechamento(request.diaFechamento());
+        cartao.setDiaVencimento(request.diaVencimento());
+        
+        // Atualizar também o nome da conta passiva vinculada
+        Conta conta = cartao.getConta();
+        conta.setNome(request.nomeCartao());
+        contaRepository.save(conta);
+
+        cartao = cartaoRepository.save(cartao);
+        log.info("[tenant={}] Cartão atualizado: id={} bandeira={}", cartao.getTenantId(), cartao.getId(), cartao.getBandeira());
 
         return toCartaoResponse(cartao);
     }
@@ -100,11 +122,13 @@ public class CartaoCreditoService {
         Categoria categoria = categoriaRepository.findById(request.categoriaId())
                 .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
 
+        LocalDate dataCompra = request.data() != null ? request.data() : dateProvider.now();
+
         // Cria transação de despesa
         Transacao transacao = Transacao.builder()
                 .descricao(request.descricao())
                 .valor(request.valor())
-                .data(LocalDate.now())
+                .data(dataCompra)
                 .tipo(TipoTransacao.DESPESA)
                 .status(StatusTransacao.PENDENTE)
                 .categoria(categoria)
@@ -126,7 +150,6 @@ public class CartaoCreditoService {
         BigDecimal valorParcela = request.valor()
                 .divide(BigDecimal.valueOf(request.parcelas()), 2, RoundingMode.HALF_UP);
 
-        LocalDate dataCompra = LocalDate.now();
         FaturaCartao primeiraFatura = null;
 
         for (int i = 0; i < request.parcelas(); i++) {
@@ -172,7 +195,10 @@ public class CartaoCreditoService {
     public List<FaturaCartaoResponse> listarFaturas(Long cartaoId) {
         findCartaoById(cartaoId);
         return faturaRepository.findByCartaoIdOrderByAnoReferenciaDescMesReferenciaDesc(cartaoId)
-                .stream().map(this::toFaturaResponse).toList();
+                .stream()
+                .map(this::toFaturaResponse)
+                .filter(f -> f.valorTotal().compareTo(BigDecimal.ZERO) > 0) // Remove faturas vazias (ex: transações deletadas)
+                .toList();
     }
 
     public FaturaCartaoResponse buscarFatura(Long faturaId) {
@@ -205,7 +231,7 @@ public class CartaoCreditoService {
     @Transactional
     public void processarFaturas() {
         log.info("Processando faturas de cartão...");
-        LocalDate hoje = LocalDate.now();
+        LocalDate hoje = dateProvider.now();
 
         List<FaturaCartao> abertas = faturaRepository.findByStatus(StatusFatura.ABERTA);
         for (FaturaCartao fatura : abertas) {
@@ -236,7 +262,46 @@ public class CartaoCreditoService {
 
     // ========================= HELPERS =========================
 
+    /**
+     * Registra uma transação avulsa (como recorrência) no cartão.
+     */
+    @Transactional
+    public void registrarTransacaoNoCartao(Transacao transacao, Long contaId) {
+        CartaoCredito cartao = cartaoRepository.findByContaId(contaId)
+                .orElseThrow(() -> new BusinessException("Cartão não encontrado para a conta id: " + contaId));
+
+        // Criar lançamento DEBITO na conta do cartão
+        Lancamento debito = Lancamento.builder()
+                .conta(cartao.getConta())
+                .valor(transacao.getValor())
+                .direcao(DirecaoLancamento.DEBITO)
+                .descricao(transacao.getDescricao())
+                .build();
+        transacao.addLancamento(debito);
+
+        // Vincular à fatura
+        LocalDate dataRef = calcularDataFatura(transacao.getData(), cartao.getDiaFechamento(), 0);
+        int mesFatura = dataRef.getMonthValue();
+        int anoFatura = dataRef.getYear();
+
+        FaturaCartao fatura = faturaRepository
+                .findByCartaoIdAndMesReferenciaAndAnoReferencia(cartao.getId(), mesFatura, anoFatura)
+                .orElseGet(() -> criarFatura(cartao, mesFatura, anoFatura));
+
+        Parcela parcela = Parcela.builder()
+                .transacao(transacao)
+                .numeroParcela(1)
+                .totalParcelas(1)
+                .valorParcela(transacao.getValor())
+                .dataVencimento(fatura.getDataVencimento())
+                .paga(false)
+                .build();
+        fatura.adicionarParcela(parcela);
+        faturaRepository.save(fatura);
+    }
+
     private FaturaCartao criarFatura(CartaoCredito cartao, int mes, int ano) {
+        // Garantimos que o dia de vencimento não ultrapasse o fim do mês
         int diaVenc = Math.min(cartao.getDiaVencimento(),
                 LocalDate.of(ano, mes, 1).lengthOfMonth());
 
@@ -254,14 +319,16 @@ public class CartaoCreditoService {
     /**
      * Calcula em qual mês/ano a parcela N cai, baseado no dia de fechamento.
      */
-    private LocalDate calcularDataFatura(LocalDate dataCompra, int diaFechamento, int parcelaIndex) {
-        // Se a compra é antes do fechamento, cai na fatura do mês seguinte
-        // Se depois, cai na fatura 2 meses depois
+    public LocalDate calcularDataFatura(LocalDate dataCompra, int diaFechamento, int parcelaIndex) {
+        // Se a compra foi feita NO dia de fechamento ou ANTES, cai na fatura do mês atual.
+        // Se foi DEPOIS do fechamento, cai na fatura do mês seguinte (o "melhor dia").
         LocalDate ref = dataCompra;
         if (dataCompra.getDayOfMonth() > diaFechamento) {
             ref = ref.plusMonths(1);
         }
-        return ref.plusMonths(parcelaIndex + 1).with(TemporalAdjusters.firstDayOfMonth());
+        
+        // Adiciona o deslocamento da parcela
+        return ref.plusMonths(parcelaIndex).with(TemporalAdjusters.firstDayOfMonth());
     }
 
     private CartaoCredito findCartaoById(Long id) {
@@ -283,17 +350,50 @@ public class CartaoCreditoService {
     }
 
     private FaturaCartaoResponse toFaturaResponse(FaturaCartao f) {
-        List<ParcelaResponse> parcelas = f.getParcelas().stream()
-                .map(p -> new ParcelaResponse(
-                        p.getId(), p.getNumeroParcela(), p.getTotalParcelas(),
-                        p.getValorParcela(), p.getDataVencimento(), p.getPaga(),
-                        p.getTransacao().getDescricao()))
-                .toList();
+        // Filtramos as parcelas cujas transações ainda existem (não foram deletadas)
+        List<ParcelaResponse> parcelasRes = new ArrayList<>();
+        BigDecimal totalReal = BigDecimal.ZERO;
+
+        for (Parcela p : f.getParcelas()) {
+            boolean ativa = true;
+            String descricao = "Transação Excluída";
+            try {
+                if (p.getTransacao() != null && p.getTransacao().getDeletedAt() == null && p.getTransacao().getStatus() != StatusTransacao.CANCELADO) {
+                    descricao = p.getTransacao().getDescricao();
+                    totalReal = totalReal.add(p.getValorParcela());
+                } else {
+                    ativa = false;
+                }
+            } catch (EntityNotFoundException e) {
+                ativa = false;
+            }
+
+            if (ativa) {
+                parcelasRes.add(new ParcelaResponse(
+                    p.getId(), p.getNumeroParcela(), p.getTotalParcelas(),
+                    p.getValorParcela(), p.getDataVencimento().toString(), p.getPaga(),
+                    descricao));
+            }
+        }
+
+        // Lógica dinâmica para o status da fatura
+        StatusFatura statusCalculado = f.getStatus();
+        if (statusCalculado == StatusFatura.ABERTA || statusCalculado == StatusFatura.FECHADA) {
+            LocalDate hoje = dateProvider.now();
+            int diaFechamento = f.getCartao().getDiaFechamento();
+            LocalDate dataFechamento = LocalDate.of(f.getAnoReferencia(), f.getMesReferencia(), diaFechamento);
+            
+            if (hoje.isAfter(f.getDataVencimento()) && statusCalculado != StatusFatura.PAGA) {
+                statusCalculado = StatusFatura.ATRASADA;
+            } else if (hoje.isAfter(dataFechamento) || hoje.isEqual(dataFechamento)) {
+                statusCalculado = StatusFatura.FECHADA;
+            }
+        }
 
         return new FaturaCartaoResponse(
                 f.getId(), f.getCartao().getId(), f.getCartao().getBandeira(),
                 f.getMesReferencia(), f.getAnoReferencia(),
-                f.getValorTotal(), f.getDataVencimento(), f.getStatus(),
-                parcelas, f.getCreatedAt());
+                totalReal, f.getDataVencimento().toString(), statusCalculado,
+                parcelasRes, f.getCreatedAt());
     }
 }

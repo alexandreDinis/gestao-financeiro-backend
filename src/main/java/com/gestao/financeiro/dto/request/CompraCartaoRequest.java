@@ -21,5 +21,8 @@ public record CompraCartaoRequest(
 
         @NotNull(message = "Número de parcelas é obrigatório")
         @Positive(message = "Parcelas devem ser positivas")
-        Integer parcelas
+        Integer parcelas,
+
+        @NotNull(message = "Data da compra é obrigatória")
+        java.time.LocalDate data
 ) {}

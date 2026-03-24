@@ -114,17 +114,43 @@ public class DividaService {
 
         LocalDate dataPag = request.dataPagamento() != null ? request.dataPagamento() : LocalDate.now();
 
-        // 1. Atualizar Parcela
+        BigDecimal valorPago = request.valorPago() != null ? request.valorPago() : parcela.getValor();
+        if (valorPago.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("Valor pago deve ser maior que zero.");
+        }
+        if (valorPago.compareTo(parcela.getValor()) > 0) {
+            throw new BusinessException("O valor pago não pode ser maior que o saldo atual da parcela.");
+        }
+
+        // 1. Verificar se é parcial
+        ParcelaDivida novaParcelaPendente = null;
+        if (valorPago.compareTo(parcela.getValor()) < 0) {
+            BigDecimal saldoRestante = parcela.getValor().subtract(valorPago);
+            
+            // Reduz o valor da parcela atual para o que foi pago
+            parcela.setValor(valorPago);
+            
+            // Cria uma nova parcela projetando o saldo devedor restante
+            novaParcelaPendente = ParcelaDivida.builder()
+                    .divida(divida)
+                    .numeroParcela(parcela.getNumeroParcela()) 
+                    .valor(saldoRestante)
+                    .dataVencimento(parcela.getDataVencimento())
+                    .status(StatusTransacao.PENDENTE)
+                    .build();
+        }
+
+        // 2. Atualizar Parcela Atual
         parcela.setStatus(StatusTransacao.PAGO);
         parcela.setDataPagamento(dataPag);
 
-        // 2. Transação para Ledger
+        // 3. Transação para Ledger
         TipoTransacao tipoTx = divida.getTipo() == TipoDivida.A_RECEBER ? TipoTransacao.RECEITA : TipoTransacao.DESPESA;
         String desc = (tipoTx == TipoTransacao.RECEITA ? "Recebimento: " : "Pagamento: ") + divida.getDescricao() + " (Parcela " + parcela.getNumeroParcela() + ")";
 
         com.gestao.financeiro.dto.request.TransacaoRequest txRequest = new com.gestao.financeiro.dto.request.TransacaoRequest(
                 desc,
-                parcela.getValor(),
+                valorPago,
                 dataPag,
                 parcela.getDataVencimento(),
                 tipoTx,
@@ -142,20 +168,24 @@ public class DividaService {
         // É melhor setar na própria transação que já foi gerada no transacaoService
         Transacao transacao = new Transacao();
         transacao.setId(txResponse.id());
-        parcela.setTransacaoGerada(transacao); // Evita circular dev dependency by fake reference set, JPA sets FK by ID
+        parcela.setTransacaoGerada(transacao); 
         
-        // 3. Atualizar Pessoa Score
+        // 4. Atualizar Pessoa Score
         boolean pagoNoPrazo = !dataPag.isAfter(parcela.getDataVencimento());
         pessoa.registrarPagamento(pagoNoPrazo);
         pessoaRepository.save(pessoa);
 
-        // 4. Abater Dívida
-        divida.abaterValor(parcela.getValor());
-        dividaRepository.save(divida);
+        // 5. Abater Dívida (saldoRestante)
+        divida.abaterValor(valorPago);
         
+        if (novaParcelaPendente != null) {
+            divida.adicionarParcela(novaParcelaPendente);
+        }
+        
+        dividaRepository.save(divida);
         parcela = parcelaRepository.save(parcela);
         
-        // Refresh to get actual generated transacao mapping? We only need ID.
+        // Refresh to get actual generated transacao mapping
         return dividaMapper.toParcelaResponse(parcela);
     }
 

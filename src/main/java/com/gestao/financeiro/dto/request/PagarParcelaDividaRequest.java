@@ -10,5 +10,7 @@ public record PagarParcelaDividaRequest(
 
         Long categoriaId,
 
-        LocalDate dataPagamento
+        LocalDate dataPagamento,
+
+        java.math.BigDecimal valorPago
 ) {}

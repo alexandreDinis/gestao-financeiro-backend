@@ -29,7 +29,13 @@ public class ContaService {
 
     public Page<ContaResponse> listar(Pageable pageable) {
         return contaRepository.findByAtivaTrue(pageable)
-                .map(contaMapper::toResponse);
+                .map(conta -> {
+                    BigDecimal saldoAtual = contaRepository.calcularSaldo(conta.getId());
+                    if (saldoAtual == null) {
+                        saldoAtual = conta.getSaldoInicial() != null ? conta.getSaldoInicial() : BigDecimal.ZERO;
+                    }
+                    return contaMapper.toResponse(conta, saldoAtual);
+                });
     }
 
     public ContaResponse buscarPorId(Long id) {

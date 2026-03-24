@@ -12,4 +12,6 @@ public interface CartaoCreditoRepository extends JpaRepository<CartaoCredito, Lo
     Page<CartaoCredito> findAll(Pageable pageable);
 
     boolean existsByContaId(Long contaId);
+
+    java.util.Optional<CartaoCredito> findByContaId(Long contaId);
 }

@@ -45,6 +45,11 @@ public class CartaoCreditoController {
         cartaoService.deletarCartao(id);
     }
 
+    @PutMapping("/{id}")
+    public ApiResponse<CartaoCreditoResponse> editar(@PathVariable Long id, @Valid @RequestBody CartaoCreditoRequest request) {
+        return ApiResponse.ok(cartaoService.editarCartao(id, request));
+    }
+
     // ===== Compra =====
 
     @PostMapping("/compra")

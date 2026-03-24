@@ -5,6 +5,7 @@ import com.gestao.financeiro.entity.enums.TipoTransacao;
 import com.gestao.financeiro.entity.enums.TipoDespesa;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -39,6 +40,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@SQLRestriction("deleted_at IS NULL")
 public class Transacao extends TenantEntity {
 
     @Column(nullable = false)

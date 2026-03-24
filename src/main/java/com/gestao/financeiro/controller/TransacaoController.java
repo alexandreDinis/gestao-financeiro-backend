@@ -34,13 +34,14 @@ public class TransacaoController {
             @RequestParam(required = false) TipoDespesa tipoDespesa,
             @RequestParam(required = false) StatusTransacao status,
             @RequestParam(required = false) String origem,
+            @RequestParam(required = false) String busca,
             Pageable pageable) {
         Boolean geradoAutomaticamente = null;
         if ("AUTOMATICA".equalsIgnoreCase(origem)) geradoAutomaticamente = true;
         else if ("MANUAL".equalsIgnoreCase(origem)) geradoAutomaticamente = false;
 
         return ApiResponse.ok(transacaoService.listar(
-                dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, pageable));
+                dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, busca, pageable));
     }
 
     @GetMapping("/{id}")

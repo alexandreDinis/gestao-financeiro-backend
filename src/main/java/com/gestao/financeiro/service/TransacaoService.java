@@ -13,6 +13,7 @@ import com.gestao.financeiro.mapper.TransacaoMapper;
 import com.gestao.financeiro.repository.ContaRepository;
 import com.gestao.financeiro.repository.CategoriaRepository;
 import com.gestao.financeiro.repository.TransacaoRepository;
+import com.gestao.financeiro.repository.ParcelaRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -20,7 +21,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Service
@@ -29,9 +29,10 @@ import java.time.LocalDate;
 @Slf4j
 public class TransacaoService {
 
-    private final TransacaoRepository transacaoRepository;
     private final ContaRepository contaRepository;
     private final CategoriaRepository categoriaRepository;
+    private final TransacaoRepository transacaoRepository;
+    private final ParcelaRepository parcelaRepository;
     private final TransacaoMapper transacaoMapper;
 
     private static final Long DEFAULT_TENANT_ID = 1L;
@@ -41,10 +42,11 @@ public class TransacaoService {
             Long categoriaId, Long contaId,
             TipoTransacao tipo, TipoDespesa tipoDespesa,
             StatusTransacao status, Boolean geradoAutomaticamente,
+            String busca,
             Pageable pageable) {
 
         return transacaoRepository.buscarComFiltros(
-                dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, pageable
+                dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, busca, pageable
         ).map(transacaoMapper::toResponse);
     }
 
@@ -218,6 +220,14 @@ public class TransacaoService {
             estorno.addLancamento(lancamentoEstorno);
         }
 
+        // Remove parcelas se for cancelamento de compra no cartão
+        var parcelas = parcelaRepository.findByTransacaoId(id);
+        if (!parcelas.isEmpty()) {
+            parcelaRepository.deleteAll(parcelas);
+            log.info("[tenant={}] {} parcelas de cartão removidas devido a cancelamento da transação #{}", 
+                transacao.getTenantId(), parcelas.size(), id);
+        }
+
         transacaoRepository.save(transacao);
         transacaoRepository.save(estorno);
 
@@ -230,6 +240,15 @@ public class TransacaoService {
     @Transactional
     public void deletar(Long id) {
         Transacao transacao = findById(id);
+        
+        // Remove parcelas vinculadas se for compra de cartão
+        var parcelas = parcelaRepository.findByTransacaoId(id);
+        if (!parcelas.isEmpty()) {
+            parcelaRepository.deleteAll(parcelas);
+            log.info("[tenant={}] {} parcelas de cartão removidas devido a exclusão da transação #{}", 
+                transacao.getTenantId(), parcelas.size(), id);
+        }
+
         transacao.softDelete();
         transacaoRepository.save(transacao);
         log.info("[tenant={}] Transação soft-deleted: id={}", transacao.getTenantId(), id);

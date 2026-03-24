@@ -12,4 +12,11 @@ public interface MetaFinanceiraRepository extends JpaRepository<MetaFinanceira, 
     Page<MetaFinanceira> findByConcluidaFalse(Pageable pageable);
 
     long countByTenantId(Long tenantId);
+
+    /**
+     * Todas as metas ativas ordenadas por prazo (mais urgente primeiro).
+     * Usado no dashboard para exibir progresso.
+     */
+    @Query("SELECT m FROM MetaFinanceira m WHERE m.concluida = false ORDER BY m.prazo ASC NULLS LAST")
+    List<MetaFinanceira> findAllAtivas();
 }

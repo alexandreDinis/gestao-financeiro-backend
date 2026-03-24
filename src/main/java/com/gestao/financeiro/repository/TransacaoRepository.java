@@ -36,6 +36,8 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
           AND (:tipoDespesa IS NULL OR t.tipoDespesa = :tipoDespesa)
           AND (:status IS NULL OR t.status = :status)
           AND (:geradoAutomaticamente IS NULL OR t.geradoAutomaticamente = :geradoAutomaticamente)
+          AND (:busca IS NULL OR LOWER(CAST(t.descricao AS string)) LIKE LOWER(CONCAT('%', CAST(:busca AS string), '%')))
+          AND t.deletedAt IS NULL
     """)
     Page<Transacao> buscarComFiltros(
             @Param("dataInicio") LocalDate dataInicio,
@@ -46,7 +48,39 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
             @Param("tipoDespesa") TipoDespesa tipoDespesa,
             @Param("status") StatusTransacao status,
             @Param("geradoAutomaticamente") Boolean geradoAutomaticamente,
+            @Param("busca") String busca,
             Pageable pageable);
 
     long countByTenantIdAndDataBetween(Long tenantId, LocalDate dataInicio, LocalDate dataFim);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Dashboard — últimas N transações com fetch join (evita N+1)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Query("""
+        SELECT DISTINCT t FROM Transacao t
+        LEFT JOIN FETCH t.categoria
+        LEFT JOIN FETCH t.lancamentos l
+        LEFT JOIN FETCH l.conta
+        WHERE t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+        ORDER BY t.data DESC, t.id DESC
+    """)
+    List<Transacao> findUltimasTransacoes(org.springframework.data.domain.Pageable pageable);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Dashboard — próximos vencimentos até :dataLimite
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Query("""
+        SELECT DISTINCT t FROM Transacao t
+        LEFT JOIN FETCH t.lancamentos l
+        LEFT JOIN FETCH l.conta
+        WHERE t.status = 'PENDENTE'
+          AND t.data BETWEEN :hoje AND :dataLimite
+          AND t.deletedAt IS NULL
+        ORDER BY t.data ASC
+    """)
+    List<Transacao> findProximosVencimentos(
+            @Param("hoje") LocalDate hoje,
+            @Param("dataLimite") LocalDate dataLimite);
 }

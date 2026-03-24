@@ -1,9 +1,13 @@
 package com.gestao.financeiro.service;
 
+import com.gestao.financeiro.entity.Conta;
+import com.gestao.financeiro.entity.Lancamento;
 import com.gestao.financeiro.entity.Recorrencia;
 import com.gestao.financeiro.entity.Transacao;
+import com.gestao.financeiro.entity.enums.DirecaoLancamento;
 import com.gestao.financeiro.entity.enums.StatusRecorrencia;
 import com.gestao.financeiro.entity.enums.StatusTransacao;
+import com.gestao.financeiro.entity.enums.TipoConta;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
 import com.gestao.financeiro.repository.RecorrenciaRepository;
 import com.gestao.financeiro.repository.TransacaoRepository;
@@ -15,7 +19,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
-import java.time.ZoneId;
 import java.util.List;
 
 @Slf4j
@@ -25,14 +28,15 @@ public class RecorrenciaService {
 
     private final RecorrenciaRepository recorrenciaRepository;
     private final TransacaoRepository transacaoRepository;
-    private static final ZoneId TIMEZONE = ZoneId.of("America/Sao_Paulo");
+    private final CartaoCreditoService cartaoCreditoService;
+    private final com.gestao.financeiro.provider.DateProvider dateProvider;
 
     @Transactional
     public void processarRecorrenciasAgendadas() {
         log.info("Iniciando processamento de recorrências agendadas...");
         List<Recorrencia> ativas = recorrenciaRepository.findByStatus(StatusRecorrencia.ATIVA);
         
-        LocalDate hojePelaTimezone = LocalDate.now(TIMEZONE);
+        LocalDate hojePelaTimezone = dateProvider.now();
         YearMonth referenciaAtual = YearMonth.from(hojePelaTimezone);
 
         for (Recorrencia rec : ativas) {
@@ -78,6 +82,23 @@ public class RecorrenciaService {
 
         try {
             transacaoRepository.save(transacao);
+
+            // Se tiver conta vinculada, gera o lançamento/parcela
+            if (rec.getConta() != null) {
+                if (rec.getConta().getTipo() == TipoConta.CARTAO_CREDITO) {
+                    cartaoCreditoService.registrarTransacaoNoCartao(transacao, rec.getConta().getId());
+                } else {
+                    Lancamento lancamento = Lancamento.builder()
+                            .conta(rec.getConta())
+                            .valor(transacao.getValor())
+                            .direcao(DirecaoLancamento.DEBITO)
+                            .descricao(transacao.getDescricao())
+                            .build();
+                    transacao.addLancamento(lancamento);
+                    transacaoRepository.save(transacao);
+                }
+            }
+
             log.info("Gerada transação de recorrência {} para referência {}", rec.getId(), referencia);
         } catch (DataIntegrityViolationException e) {
             log.warn("Tentativa de duplicidade ignorada para recorrência {}/{}", rec.getId(), referencia);

@@ -4,11 +4,14 @@ import com.gestao.financeiro.entity.enums.TipoCategoria;
 import jakarta.persistence.*;
 import lombok.*;
 
+import org.hibernate.annotations.SQLRestriction;
+
 /**
  * Categoria de transações (ex: Alimentação, Salário, Transporte).
  * Suporta hierarquia (subcategorias via categoriaPai).
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "categoria", indexes = {
         @Index(name = "idx_categoria_tenant", columnList = "tenant_id"),
         @Index(name = "idx_categoria_pai", columnList = "categoria_pai_id")

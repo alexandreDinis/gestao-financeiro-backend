@@ -7,8 +7,8 @@ import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
 
 public record CartaoCreditoRequest(
-        @NotNull(message = "Conta é obrigatória")
-        Long contaId,
+        @NotBlank(message = "Nome do cartão é obrigatório")
+        String nomeCartao,
 
         @NotBlank(message = "Bandeira é obrigatória")
         String bandeira,

@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 @Repository
@@ -16,37 +17,110 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
 
     List<Lancamento> findByContaId(Long contaId);
 
-    /**
-     * Soma receitas (CREDITO) por conta num período.
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // Queries individuais por conta (mantidas para uso em outros serviços)
+    // ─────────────────────────────────────────────────────────────────────────
+
     @Query("""
         SELECT COALESCE(SUM(l.valor), 0)
-        FROM Lancamento l
-        JOIN l.transacao t
+        FROM Lancamento l JOIN l.transacao t
         WHERE l.conta.id = :contaId
           AND l.direcao = 'CREDITO'
           AND t.data BETWEEN :inicio AND :fim
-          AND t.status = 'PAGO'
+          AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
     """)
     BigDecimal somarCreditosPorContaEPeriodo(
             @Param("contaId") Long contaId,
-            @Param("inicio") java.time.LocalDate inicio,
-            @Param("fim") java.time.LocalDate fim);
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
 
-    /**
-     * Soma despesas (DEBITO) por conta num período.
-     */
     @Query("""
         SELECT COALESCE(SUM(l.valor), 0)
-        FROM Lancamento l
-        JOIN l.transacao t
+        FROM Lancamento l JOIN l.transacao t
         WHERE l.conta.id = :contaId
           AND l.direcao = 'DEBITO'
           AND t.data BETWEEN :inicio AND :fim
-          AND t.status = 'PAGO'
+          AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
     """)
     BigDecimal somarDebitosPorContaEPeriodo(
             @Param("contaId") Long contaId,
-            @Param("inicio") java.time.LocalDate inicio,
-            @Param("fim") java.time.LocalDate fim);
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ✅ FIX Problema 3 — query agregada: substitui o loop de 2*N queries
+    //    Traz créditos E débitos de TODAS as contas num único round-trip ao banco.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Query("""
+        SELECT
+            l.conta.id                                          AS contaId,
+            CAST(l.conta.tipo AS string)                        AS tipoConta,
+            COALESCE(SUM(CASE WHEN l.direcao = 'CREDITO' THEN l.valor ELSE 0 END), 0) AS totalCreditos,
+            COALESCE(SUM(CASE WHEN l.direcao = 'DEBITO'  THEN l.valor ELSE 0 END), 0) AS totalDebitos
+        FROM Lancamento l
+        JOIN l.transacao t
+        WHERE t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL
+          AND t.status <> 'CANCELADO'
+          AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
+        GROUP BY l.conta.id, l.conta.tipo
+    """)
+    List<com.gestao.financeiro.repository.projection.ResumoContaPeriodoProjection> resumoTodasContasPorPeriodo(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Totais globais (para fluxo de caixa e comparativo)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Query("""
+        SELECT COALESCE(SUM(l.valor), 0)
+        FROM Lancamento l JOIN l.transacao t
+        WHERE l.direcao = 'CREDITO'
+          AND l.conta.tipo <> 'CARTAO_CREDITO'
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.status = 'PAGO'
+          AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+    """)
+    BigDecimal somarTotalCreditosPeriodo(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    @Query("""
+        SELECT COALESCE(SUM(l.valor), 0)
+        FROM Lancamento l JOIN l.transacao t
+        WHERE l.direcao = 'DEBITO'
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
+    """)
+    BigDecimal somarTotalDebitosPeriodo(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ✅ FIX Problema 2 — projection tipada (antes retornava Object[])
+    //    Traz gastos de TODAS as categorias de uma vez; orçamentos montam em memória.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Query("""
+        SELECT
+            t.categoria.id    AS categoriaId,
+            t.categoria.nome  AS nomeCategoria,
+            COALESCE(SUM(l.valor), 0) AS total
+        FROM Lancamento l JOIN l.transacao t
+        WHERE l.direcao = 'DEBITO'
+          AND t.categoria IS NOT NULL
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
+        GROUP BY t.categoria.id, t.categoria.nome
+        ORDER BY total DESC
+    """)
+    List<com.gestao.financeiro.repository.projection.GastoCategoriaProjection> somarGastosPorCategoriaPeriodo(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
 }

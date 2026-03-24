@@ -12,4 +12,17 @@ public interface OrcamentoRepository extends JpaRepository<Orcamento, Long> {
     List<Orcamento> findByMesAndAno(Integer mes, Integer ano);
 
     boolean existsByCategoriaIdAndMesAndAnoAndTenantId(Long categoriaId, Integer mes, Integer ano, Long tenantId);
+
+    /**
+     * Orçamentos do mês com categoria carregada (fetch join — evita N+1).
+     */
+    @Query("""
+        SELECT o FROM Orcamento o
+        JOIN FETCH o.categoria
+        WHERE o.mes = :mes AND o.ano = :ano
+        ORDER BY o.categoria.nome ASC
+    """)
+    List<Orcamento> findByMesAndAnoWithCategoria(
+            @Param("mes") Integer mes,
+            @Param("ano") Integer ano);
 }
