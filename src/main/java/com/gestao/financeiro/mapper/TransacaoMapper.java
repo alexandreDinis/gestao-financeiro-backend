@@ -38,6 +38,8 @@ public class TransacaoMapper {
                 entity.getObservacao(),
                 categoriaResp,
                 lancamentosResp,
+                entity.getGeradoAutomaticamente(),
+                entity.getRecorrenciaId(),
                 entity.getCreatedAt()
         );
     }

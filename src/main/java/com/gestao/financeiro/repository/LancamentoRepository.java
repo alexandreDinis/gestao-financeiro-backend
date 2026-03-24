@@ -9,6 +9,8 @@ import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import com.gestao.financeiro.repository.projection.GastoCategoriaProjection;
+import com.gestao.financeiro.repository.projection.ResumoContaPeriodoProjection;
 
 @Repository
 public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
@@ -68,7 +70,7 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
           AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
         GROUP BY l.conta.id, l.conta.tipo
     """)
-    List<com.gestao.financeiro.repository.projection.ResumoContaPeriodoProjection> resumoTodasContasPorPeriodo(
+    List<ResumoContaPeriodoProjection> resumoTodasContasPorPeriodo(
             @Param("inicio") LocalDate inicio,
             @Param("fim") LocalDate fim);
 
@@ -120,7 +122,7 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
         GROUP BY t.categoria.id, t.categoria.nome
         ORDER BY total DESC
     """)
-    List<com.gestao.financeiro.repository.projection.GastoCategoriaProjection> somarGastosPorCategoriaPeriodo(
+    List<GastoCategoriaProjection> somarGastosPorCategoriaPeriodo(
             @Param("inicio") LocalDate inicio,
             @Param("fim") LocalDate fim);
 }

@@ -126,11 +126,14 @@ public class TransacaoRecorrenteService {
                                 ? hoje.withDayOfMonth(Math.min(rec.getDiaVencimento(), hoje.lengthOfMonth()))
                                 : null,
                         rec.getTipo(),
+                        null, // tipoDespesa
                         rec.getCategoria() != null ? rec.getCategoria().getId() : null,
                         rec.getConta().getId(),
-                        null,
+                        null, // contaDestinoId
                         "Gerada automaticamente pela recorrência #" + rec.getId(),
-                        null
+                        null, // idempotencyKey
+                        true, // geradoAutomaticamente
+                        rec.getId() // recorrenciaId
                 );
 
                 transacaoService.criar(request);

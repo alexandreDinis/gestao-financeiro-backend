@@ -102,6 +102,8 @@ public class TransacaoService {
                 .status(StatusTransacao.PENDENTE)
                 .observacao(request.observacao())
                 .idempotencyKey(request.idempotencyKey())
+                .geradoAutomaticamente(request.geradoAutomaticamente() != null && request.geradoAutomaticamente())
+                .recorrenciaId(request.recorrenciaId())
                 .categoria(categoria)
                 .build();
         transacao.setTenantId(DEFAULT_TENANT_ID);

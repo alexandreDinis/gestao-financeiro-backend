@@ -159,7 +159,9 @@ public class DividaService {
                 conta.getId(),
                 null, // contaDestinoId
                 "Pagamento da parcela " + parcela.getNumeroParcela() + " da dívida ID " + divida.getId(),
-                null // idempotencyKey
+                null, // idempotencyKey
+                false, // geradoAutomaticamente
+                null // recorrenciaId
         );
 
         com.gestao.financeiro.dto.response.TransacaoResponse txResponse = transacaoService.criar(txRequest);

@@ -33,6 +33,10 @@ public record TransacaoRequest(
         Long contaDestinoId,
 
         String observacao,
+        
+        String idempotencyKey,
 
-        String idempotencyKey
+        Boolean geradoAutomaticamente,
+
+        Long recorrenciaId
 ) {}

@@ -21,5 +21,7 @@ public record TransacaoResponse(
         String observacao,
         CategoriaResponse categoria,
         List<LancamentoResponse> lancamentos,
+        Boolean geradoAutomaticamente,
+        Long recorrenciaId,
         LocalDateTime createdAt
 ) {}

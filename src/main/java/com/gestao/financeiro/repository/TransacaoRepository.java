@@ -13,6 +13,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -65,7 +66,7 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
         WHERE t.deletedAt IS NULL AND t.status <> 'CANCELADO'
         ORDER BY t.data DESC, t.id DESC
     """)
-    List<Transacao> findUltimasTransacoes(org.springframework.data.domain.Pageable pageable);
+    List<Transacao> findUltimasTransacoes(Pageable pageable);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Dashboard — próximos vencimentos até :dataLimite
