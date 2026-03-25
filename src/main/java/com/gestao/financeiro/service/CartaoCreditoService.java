@@ -10,6 +10,7 @@ import com.gestao.financeiro.entity.enums.*;
 import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.repository.*;
+import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.extern.slf4j.Slf4j;
@@ -39,7 +40,7 @@ public class CartaoCreditoService {
     private final TransacaoRepository transacaoRepository;
     private final com.gestao.financeiro.provider.DateProvider dateProvider;
 
-    private static final Long DEFAULT_TENANT_ID = 1L;
+
 
     // ========================= CARTÃO CRUD =========================
 
@@ -53,6 +54,10 @@ public class CartaoCreditoService {
 
     @Transactional
     public CartaoCreditoResponse criarCartao(CartaoCreditoRequest request) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            throw new BusinessException("Tenant ID não encontrado no contexto");
+        }
         
         // Criar a conta passiva do cartão automaticamente
         Conta conta = Conta.builder()
@@ -61,7 +66,7 @@ public class CartaoCreditoService {
                 .saldoInicial(BigDecimal.ZERO)
                 .ativa(true)
                 .build();
-        conta.setTenantId(DEFAULT_TENANT_ID);
+        conta.setTenantId(tenantId);
         conta = contaRepository.save(conta);
 
         CartaoCredito cartao = CartaoCredito.builder()
@@ -71,10 +76,10 @@ public class CartaoCreditoService {
                 .diaFechamento(request.diaFechamento())
                 .diaVencimento(request.diaVencimento())
                 .build();
-        cartao.setTenantId(DEFAULT_TENANT_ID);
+        cartao.setTenantId(tenantId);
 
         cartao = cartaoRepository.save(cartao);
-        log.info("[tenant={}] Cartão criado: id={} bandeira={}", DEFAULT_TENANT_ID, cartao.getId(), cartao.getBandeira());
+        log.info("[tenant={}] Cartão criado: id={} bandeira={}", tenantId, cartao.getId(), cartao.getBandeira());
 
         return toCartaoResponse(cartao);
     }
@@ -117,6 +122,11 @@ public class CartaoCreditoService {
      */
     @Transactional
     public FaturaCartaoResponse comprar(CompraCartaoRequest request) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            throw new BusinessException("Tenant ID não encontrado no contexto");
+        }
+
         CartaoCredito cartao = findCartaoById(request.cartaoId());
 
         Categoria categoria = categoriaRepository.findById(request.categoriaId())
@@ -134,7 +144,7 @@ public class CartaoCreditoService {
                 .categoria(categoria)
                 .observacao(request.parcelas() + "x no cartão " + cartao.getBandeira())
                 .build();
-        transacao.setTenantId(DEFAULT_TENANT_ID);
+        transacao.setTenantId(tenantId);
 
         // Cria lançamento DEBITO na conta do cartão
         Lancamento debito = Lancamento.builder()
@@ -185,7 +195,7 @@ public class CartaoCreditoService {
         }
 
         log.info("[tenant={}] Compra parcelada: transacao={} valor={} parcelas={} cartao={}",
-                DEFAULT_TENANT_ID, transacao.getId(), request.valor(), request.parcelas(), cartao.getBandeira());
+                tenantId, transacao.getId(), request.valor(), request.parcelas(), cartao.getBandeira());
 
         return toFaturaResponse(primeiraFatura);
     }

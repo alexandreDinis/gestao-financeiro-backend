@@ -3,6 +3,7 @@ package com.gestao.financeiro.entity;
 import com.gestao.financeiro.entity.enums.Periodicidade;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -13,6 +14,7 @@ import java.time.LocalDate;
  * Ex: Aluguel mensal, salário, Netflix.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "transacao_recorrente", indexes = {
         @Index(name = "idx_recorrente_tenant", columnList = "tenant_id")
 })

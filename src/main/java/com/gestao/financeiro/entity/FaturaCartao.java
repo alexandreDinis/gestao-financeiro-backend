@@ -2,6 +2,7 @@ package com.gestao.financeiro.entity;
 
 import com.gestao.financeiro.entity.enums.StatusFatura;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -14,6 +15,7 @@ import java.util.List;
  * Unique: cartao + mesReferencia + anoReferencia.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "fatura_cartao", indexes = {
         @Index(name = "idx_fatura_tenant", columnList = "tenant_id"),
         @Index(name = "idx_fatura_cartao_periodo", columnList = "cartao_id, mes_referencia, ano_referencia")

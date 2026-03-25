@@ -2,6 +2,7 @@ package com.gestao.financeiro.entity;
 
 import com.gestao.financeiro.entity.enums.StatusTransacao;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -11,6 +12,7 @@ import java.time.LocalDate;
  * Parcela específica de uma dívida.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "parcela_divida", indexes = {
         @Index(name = "idx_pd_tenant", columnList = "tenant_id"),
         @Index(name = "idx_pd_divida", columnList = "divida_id"),

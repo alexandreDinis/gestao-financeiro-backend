@@ -1,6 +1,7 @@
 package com.gestao.financeiro.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -10,6 +11,7 @@ import java.math.BigDecimal;
  * O saldo da Conta ligada reflete a fatura acumulada.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "cartao_credito", indexes = {
         @Index(name = "idx_cartao_tenant", columnList = "tenant_id")
 })

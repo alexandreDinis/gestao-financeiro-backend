@@ -10,6 +10,7 @@ import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.OrcamentoMapper;
 import com.gestao.financeiro.repository.CategoriaRepository;
 import com.gestao.financeiro.repository.OrcamentoRepository;
+import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,7 +34,7 @@ public class OrcamentoService {
     private final OrcamentoMapper orcamentoMapper;
     private final EntityManager entityManager;
 
-    private static final Long DEFAULT_TENANT_ID = 1L;
+
 
     public List<OrcamentoResponse> listar(Integer mes, Integer ano) {
         return orcamentoRepository.findByMesAndAno(mes, ano).stream()
@@ -92,8 +93,13 @@ public class OrcamentoService {
 
     @Transactional
     public OrcamentoResponse criar(OrcamentoRequest request) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            throw new BusinessException("Tenant ID não encontrado no contexto");
+        }
+
         if (orcamentoRepository.existsByCategoriaIdAndMesAndAnoAndTenantId(
-                request.categoriaId(), request.mes(), request.ano(), DEFAULT_TENANT_ID)) {
+                request.categoriaId(), request.mes(), request.ano(), tenantId)) {
             throw new BusinessException("Já existe orçamento para esta categoria neste mês.");
         }
 
@@ -101,12 +107,12 @@ public class OrcamentoService {
                 .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
 
         Orcamento orcamento = orcamentoMapper.toEntity(request);
-        orcamento.setTenantId(DEFAULT_TENANT_ID);
+        orcamento.setTenantId(tenantId);
         orcamento.setCategoria(categoria);
 
         orcamento = orcamentoRepository.save(orcamento);
         log.info("[tenant={}] Orçamento criado: id={} categoria={} limite={} {}/{}",
-                DEFAULT_TENANT_ID, orcamento.getId(), categoria.getNome(), request.limite(), request.mes(), request.ano());
+                tenantId, orcamento.getId(), categoria.getNome(), request.limite(), request.mes(), request.ano());
 
         return orcamentoMapper.toResponse(orcamento);
     }

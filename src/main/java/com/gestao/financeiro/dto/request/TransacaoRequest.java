@@ -38,5 +38,7 @@ public record TransacaoRequest(
 
         Boolean geradoAutomaticamente,
 
-        Long recorrenciaId
+        Long recorrenciaId,
+
+        com.gestao.financeiro.entity.enums.StatusTransacao status
 ) {}

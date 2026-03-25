@@ -2,6 +2,7 @@ package com.gestao.financeiro.entity;
 
 import com.gestao.financeiro.entity.enums.StatusAssinatura;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -11,6 +12,7 @@ import java.time.LocalDate;
  * Vincula um Tenant a um Plano, controlando datas e status de assinatura.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "assinatura", indexes = {
         @Index(name = "idx_assinatura_tenant", columnList = "tenant_id")
 })

@@ -2,6 +2,7 @@ package com.gestao.financeiro.entity;
 
 import com.gestao.financeiro.entity.enums.ScoreConfiabilidade;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 /**
@@ -9,6 +10,7 @@ import lombok.*;
  * Mantém um histórico/score baseado em pagamentos em dia ou atrasos.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "pessoa", indexes = {
         @Index(name = "idx_pessoa_tenant", columnList = "tenant_id")
 })

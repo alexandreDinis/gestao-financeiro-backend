@@ -3,6 +3,7 @@ package com.gestao.financeiro.entity;
 import com.gestao.financeiro.entity.enums.StatusDivida;
 import com.gestao.financeiro.entity.enums.TipoDivida;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -14,6 +15,7 @@ import java.util.List;
  * Representa um empréstimo (para receber) ou uma dívida (para pagar).
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "divida", indexes = {
         @Index(name = "idx_divida_tenant", columnList = "tenant_id"),
         @Index(name = "idx_divida_pessoa", columnList = "pessoa_id")

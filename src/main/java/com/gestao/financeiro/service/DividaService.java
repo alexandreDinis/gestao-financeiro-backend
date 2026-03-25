@@ -10,6 +10,7 @@ import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.DividaMapper;
 import com.gestao.financeiro.repository.*;
+import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -34,8 +35,9 @@ public class DividaService {
     private final TransacaoService transacaoService;
     private final ContaRepository contaRepository;
     private final CategoriaRepository categoriaRepository;
+    private final TransacaoRepository transacaoRepository;
 
-    private static final Long DEFAULT_TENANT_ID = 1L;
+
 
     public Page<DividaResponse> listar(TipoDivida tipo, Pageable pageable) {
         if (tipo != null) {
@@ -50,11 +52,16 @@ public class DividaService {
 
     @Transactional
     public DividaResponse criar(DividaRequest request) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            throw new BusinessException("Tenant ID não encontrado no contexto");
+        }
+
         Pessoa pessoa = pessoaRepository.findById(request.pessoaId())
                 .orElseThrow(() -> new ResourceNotFoundException("Pessoa", request.pessoaId()));
 
         Divida divida = dividaMapper.toEntity(request);
-        divida.setTenantId(DEFAULT_TENANT_ID);
+        divida.setTenantId(tenantId);
         divida.setPessoa(pessoa);
 
         pessoa.setTotalEmprestimos(pessoa.getTotalEmprestimos() + 1);
@@ -86,7 +93,7 @@ public class DividaService {
         }
 
         divida = dividaRepository.save(divida);
-        log.info("[tenant={}] Dívida criada: id={} pessoa={} valor={}", DEFAULT_TENANT_ID, divida.getId(), pessoa.getNome(), request.valorTotal());
+        log.info("[tenant={}] Dívida criada: id={} pessoa={} valor={}", tenantId, divida.getId(), pessoa.getNome(), request.valorTotal());
 
         return dividaMapper.toResponse(divida);
     }
@@ -161,16 +168,15 @@ public class DividaService {
                 "Pagamento da parcela " + parcela.getNumeroParcela() + " da dívida ID " + divida.getId(),
                 null, // idempotencyKey
                 false, // geradoAutomaticamente
-                null // recorrenciaId
+                null, // recorrenciaId
+                StatusTransacao.PAGO
         );
 
         com.gestao.financeiro.dto.response.TransacaoResponse txResponse = transacaoService.criar(txRequest);
         
         // Em seguida marcamos o vínculo manualmente, pois service wrapper retorna DTO
-        // É melhor setar na própria transação que já foi gerada no transacaoService
-        Transacao transacao = new Transacao();
-        transacao.setId(txResponse.id());
-        parcela.setTransacaoGerada(transacao); 
+        // Utilizamos getReferenceById para evitar carregar a entidade inteira mas garantir o vínculo JPA correto
+        parcela.setTransacaoGerada(transacaoRepository.getReferenceById(txResponse.id()));
         
         // 4. Atualizar Pessoa Score
         boolean pagoNoPrazo = !dataPag.isAfter(parcela.getDataVencimento());

@@ -6,6 +6,7 @@ import com.gestao.financeiro.entity.Pessoa;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.PessoaMapper;
 import com.gestao.financeiro.repository.PessoaRepository;
+import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -22,7 +23,7 @@ public class PessoaService {
     private final PessoaRepository pessoaRepository;
     private final PessoaMapper pessoaMapper;
 
-    private static final Long DEFAULT_TENANT_ID = 1L;
+
 
     public Page<PessoaResponse> listar(Pageable pageable) {
         return pessoaRepository.findAll(pageable).map(pessoaMapper::toResponse);
@@ -34,11 +35,16 @@ public class PessoaService {
 
     @Transactional
     public PessoaResponse criar(PessoaRequest request) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            throw new com.gestao.financeiro.exception.BusinessException("Tenant ID não encontrado no contexto");
+        }
+
         Pessoa pessoa = pessoaMapper.toEntity(request);
-        pessoa.setTenantId(DEFAULT_TENANT_ID);
+        pessoa.setTenantId(tenantId);
         pessoa = pessoaRepository.save(pessoa);
 
-        log.info("[tenant={}] Pessoa criada: id={} nome={}", DEFAULT_TENANT_ID, pessoa.getId(), pessoa.getNome());
+        log.info("[tenant={}] Pessoa criada: id={} nome={}", tenantId, pessoa.getId(), pessoa.getNome());
         return pessoaMapper.toResponse(pessoa);
     }
 

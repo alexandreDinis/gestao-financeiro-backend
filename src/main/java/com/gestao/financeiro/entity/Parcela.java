@@ -1,6 +1,7 @@
 package com.gestao.financeiro.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -12,6 +13,7 @@ import java.time.LocalDate;
  * Distribuída automaticamente entre faturas no momento da compra.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "parcela", indexes = {
         @Index(name = "idx_parcela_tenant", columnList = "tenant_id"),
         @Index(name = "idx_parcela_fatura", columnList = "fatura_id"),

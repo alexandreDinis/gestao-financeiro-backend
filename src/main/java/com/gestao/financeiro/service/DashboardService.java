@@ -3,10 +3,14 @@ package com.gestao.financeiro.service;
 import com.gestao.financeiro.dto.response.DashboardResponse;
 import com.gestao.financeiro.dto.response.DashboardResponse.*;
 import com.gestao.financeiro.entity.*;
+import com.gestao.financeiro.entity.enums.StatusTransacao;
 import com.gestao.financeiro.entity.enums.TipoConta;
+import com.gestao.financeiro.entity.enums.TipoDivida;
+import com.gestao.financeiro.entity.enums.TipoTransacao;
 import com.gestao.financeiro.repository.*;
 import com.gestao.financeiro.repository.projection.GastoCategoriaProjection;
 import com.gestao.financeiro.repository.projection.ResumoContaPeriodoProjection;
+import com.gestao.financeiro.service.TransacaoRecorrenteService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -18,6 +22,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.Month;
+import java.time.YearMonth;
 import java.time.format.TextStyle;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
@@ -42,12 +47,23 @@ public class DashboardService {
     private final CartaoCreditoRepository   cartaoCreditoRepository;
     private final FaturaCartaoRepository    faturaCartaoRepository;
     private final AlertaScoreCalculator     alertaCalculator;
+    private final TransacaoRecorrenteRepository transacaoRecorrenteRepository;
+    private final TransacaoRecorrenteService transacaoRecorrenteService;
+    private final ParcelaDividaRepository parcelaDividaRepository;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Ponto de entrada
     // ─────────────────────────────────────────────────────────────────────────
 
+    @Transactional
     public DashboardResponse getDashboard() {
+        // Garantir que as recorrências estão em dia antes de montar o dashboard
+        try {
+            transacaoRecorrenteService.processarRecorrencias();
+        } catch (Exception e) {
+            log.error("Erro ao processar recorrências no dashboard: {}", e.getMessage());
+        }
+
         LocalDate hoje      = LocalDate.now();
         LocalDate inicioMes = hoje.with(TemporalAdjusters.firstDayOfMonth());
         LocalDate fimMes    = hoje.with(TemporalAdjusters.lastDayOfMonth());
@@ -163,9 +179,41 @@ public class DashboardService {
                     mesAtual.receitas(), mesAtual.despesas(), mesAtual.saldo());
         }
 
-        BigDecimal fator = BigDecimal.valueOf((double) diasTotais / diasDecorridos);
-        BigDecimal recProj  = mesAtual.receitas().multiply(fator).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal despProj = mesAtual.despesas().multiply(fator).setScale(2, RoundingMode.HALF_UP);
+        // Calculamos o fixo pendente (recorrências que ainda não geraram transação este mês)
+        BigDecimal fixoPendenteReceita = BigDecimal.ZERO;
+        BigDecimal fixoPendenteDespesa = BigDecimal.ZERO;
+        
+        YearMonth referencia = YearMonth.from(hoje);
+        List<TransacaoRecorrente> recorrentes = transacaoRecorrenteRepository.findByAtivaTrue();
+        
+        for (TransacaoRecorrente rec : recorrentes) {
+            boolean jaGerada = transacaoRepository.existsByRecorrenciaIdAndReferencia(rec.getId(), referencia);
+            if (!jaGerada && rec.isAtivaEm(hoje)) {
+                if (rec.getTipo() == TipoTransacao.RECEITA) {
+                    fixoPendenteReceita = fixoPendenteReceita.add(rec.getValor());
+                } else if (rec.getTipo() == TipoTransacao.DESPESA) {
+                    fixoPendenteDespesa = fixoPendenteDespesa.add(rec.getValor());
+                }
+            }
+        }
+
+        // Adicionamos parcelas de dívidas/empréstimos pendentes para o mês
+        List<ParcelaDivida> parcelasPendentes = parcelaDividaRepository.findByStatusInAndDataVencimentoBetween(
+                List.of(StatusTransacao.PENDENTE, StatusTransacao.ATRASADO),
+                hoje.with(TemporalAdjusters.firstDayOfMonth()), fimMes);
+
+        for (ParcelaDivida p : parcelasPendentes) {
+            if (p.getDivida().getTipo() == TipoDivida.A_RECEBER) {
+                fixoPendenteReceita = fixoPendenteReceita.add(p.getValor());
+            } else if (p.getDivida().getTipo() == TipoDivida.A_PAGAR) {
+                fixoPendenteDespesa = fixoPendenteDespesa.add(p.getValor());
+            }
+        }
+
+        // Projeção: Atual + Pendentes Fixos
+        // Para simplificar e responder ao feedback do usuário: Atual + Pendentes
+        BigDecimal recProj  = mesAtual.receitas().add(fixoPendenteReceita).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal despProj = mesAtual.despesas().add(fixoPendenteDespesa).setScale(2, RoundingMode.HALF_UP);
 
         return new ProjecaoMes(diasDecorridos, diasTotais,
                 recProj, despProj, recProj.subtract(despProj));
@@ -206,7 +254,7 @@ public class DashboardService {
             BigDecimal rec  = lancamentoRepository.somarTotalCreditosPeriodo(inicio, fim);
             BigDecimal desp = lancamentoRepository.somarTotalDebitosPeriodo(inicio, fim);
             String label = capitalize(Month.of(ref.getMonthValue())
-                    .getDisplayName(TextStyle.SHORT, new Locale("pt", "BR")));
+                    .getDisplayName(TextStyle.SHORT, Locale.forLanguageTag("pt-BR")));
 
             fluxo.add(new FluxoMensal(ref.getYear(), ref.getMonthValue(),
                     label, rec, desp, rec.subtract(desp)));

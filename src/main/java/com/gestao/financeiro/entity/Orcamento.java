@@ -1,6 +1,7 @@
 package com.gestao.financeiro.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -10,6 +11,7 @@ import java.math.BigDecimal;
  * Define limite de gastos para cada categoria em um mês.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "orcamento", indexes = {
         @Index(name = "idx_orcamento_tenant", columnList = "tenant_id"),
         @Index(name = "idx_orcamento_periodo", columnList = "tenant_id, mes, ano")

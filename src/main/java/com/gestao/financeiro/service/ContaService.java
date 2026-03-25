@@ -7,6 +7,7 @@ import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.ContaMapper;
 import com.gestao.financeiro.repository.ContaRepository;
+import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -24,8 +25,6 @@ public class ContaService {
 
     private final ContaRepository contaRepository;
     private final ContaMapper contaMapper;
-
-    private static final Long DEFAULT_TENANT_ID = 1L;
 
     public Page<ContaResponse> listar(Pageable pageable) {
         return contaRepository.findByAtivaTrue(pageable)
@@ -55,15 +54,20 @@ public class ContaService {
 
     @Transactional
     public ContaResponse criar(ContaRequest request) {
-        if (contaRepository.existsByNomeAndTenantId(request.nome(), DEFAULT_TENANT_ID)) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            throw new BusinessException("Tenant ID não encontrado no contexto");
+        }
+
+        if (contaRepository.existsByNomeAndTenantId(request.nome(), tenantId)) {
             throw new BusinessException("Já existe uma conta com o nome: " + request.nome());
         }
 
         Conta conta = contaMapper.toEntity(request);
-        conta.setTenantId(DEFAULT_TENANT_ID);
+        conta.setTenantId(tenantId);
 
         conta = contaRepository.save(conta);
-        log.info("[tenant={}] Conta criada: id={} nome={} tipo={}", DEFAULT_TENANT_ID, conta.getId(), conta.getNome(), conta.getTipo());
+        log.info("[tenant={}] Conta criada: id={} nome={} tipo={}", tenantId, conta.getId(), conta.getNome(), conta.getTipo());
 
         return contaMapper.toResponse(conta);
     }
@@ -87,6 +91,7 @@ public class ContaService {
     @Transactional
     public void deletar(Long id) {
         Conta conta = findById(id);
+        conta.setAtiva(false);
         conta.softDelete();
         contaRepository.save(conta);
         log.info("[tenant={}] Conta desativada (soft delete): id={}", conta.getTenantId(), id);

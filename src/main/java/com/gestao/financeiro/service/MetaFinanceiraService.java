@@ -8,6 +8,7 @@ import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.MetaFinanceiraMapper;
 import com.gestao.financeiro.repository.MetaFinanceiraRepository;
+import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -24,7 +25,7 @@ public class MetaFinanceiraService {
     private final MetaFinanceiraRepository metaRepository;
     private final MetaFinanceiraMapper metaMapper;
 
-    private static final Long DEFAULT_TENANT_ID = 1L;
+
 
     public Page<MetaFinanceiraResponse> listar(Pageable pageable) {
         return metaRepository.findAll(pageable).map(metaMapper::toResponse);
@@ -36,12 +37,17 @@ public class MetaFinanceiraService {
 
     @Transactional
     public MetaFinanceiraResponse criar(MetaFinanceiraRequest request) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            throw new BusinessException("Tenant ID não encontrado no contexto");
+        }
+
         MetaFinanceira meta = metaMapper.toEntity(request);
-        meta.setTenantId(DEFAULT_TENANT_ID);
+        meta.setTenantId(tenantId);
         meta = metaRepository.save(meta);
 
         log.info("[tenant={}] Meta criada: id={} nome={} alvo={}",
-                DEFAULT_TENANT_ID, meta.getId(), meta.getNome(), meta.getValorAlvo());
+                tenantId, meta.getId(), meta.getNome(), meta.getValorAlvo());
 
         return metaMapper.toResponse(meta);
     }

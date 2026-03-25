@@ -1,6 +1,7 @@
 package com.gestao.financeiro.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -11,6 +12,7 @@ import java.time.LocalDate;
  * Acumula depósitos até atingir o valor alvo.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "meta_financeira", indexes = {
         @Index(name = "idx_meta_tenant", columnList = "tenant_id")
 })

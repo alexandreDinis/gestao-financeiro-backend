@@ -3,12 +3,14 @@ package com.gestao.financeiro.entity;
 import com.gestao.financeiro.entity.enums.StatusRecorrencia;
 import com.gestao.financeiro.entity.enums.TipoRecorrencia;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "recorrencia")
 @Getter
 @Setter

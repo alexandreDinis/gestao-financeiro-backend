@@ -2,6 +2,7 @@ package com.gestao.financeiro.entity;
 
 import com.gestao.financeiro.entity.enums.TipoPlano;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -10,6 +11,7 @@ import java.math.BigDecimal;
  * Planos de assinatura disponíveis na plataforma SaaS.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "plano")
 @Getter
 @Setter

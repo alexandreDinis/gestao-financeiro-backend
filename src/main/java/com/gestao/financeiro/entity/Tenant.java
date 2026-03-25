@@ -2,6 +2,7 @@ package com.gestao.financeiro.entity;
 
 import com.gestao.financeiro.entity.enums.StatusTenant;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 /**
@@ -9,6 +10,7 @@ import lombok.*;
  * Esta classe estende BaseEntity e não TenantEntity, pois ela própria é o Tenant.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "tenant")
 @Getter
 @Setter
