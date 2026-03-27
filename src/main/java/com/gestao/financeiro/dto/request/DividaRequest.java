@@ -1,5 +1,6 @@
 package com.gestao.financeiro.dto.request;
 
+import com.gestao.financeiro.entity.enums.Periodicidade;
 import com.gestao.financeiro.entity.enums.TipoDivida;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -29,7 +30,12 @@ public record DividaRequest(
 
         String observacao,
 
-        @NotNull(message = "Número de parcelas é obrigatório")
-        @Positive(message = "Parcelas devem ser pelo menos 1")
-        Integer parcelas
+        Integer parcelas,
+
+        // ─── Campos de Recorrência ──────────────────────
+        Boolean recorrente,
+        Periodicidade periodicidade,
+        Integer diaVencimento,
+        BigDecimal valorParcelaRecorrente
 ) {}
+

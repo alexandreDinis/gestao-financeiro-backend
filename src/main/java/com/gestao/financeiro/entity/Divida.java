@@ -1,5 +1,6 @@
 package com.gestao.financeiro.entity;
 
+import com.gestao.financeiro.entity.enums.Periodicidade;
 import com.gestao.financeiro.entity.enums.StatusDivida;
 import com.gestao.financeiro.entity.enums.TipoDivida;
 import jakarta.persistence.*;
@@ -58,6 +59,21 @@ public class Divida extends TenantEntity {
     @Column(columnDefinition = "TEXT")
     private String observacao;
 
+    // ─── Campos de Recorrência ──────────────────────────────────
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean recorrente = false;
+
+    @Enumerated(EnumType.STRING)
+    private Periodicidade periodicidade;
+
+    @Column(name = "dia_vencimento")
+    private Integer diaVencimento;
+
+    @Column(name = "valor_parcela_recorrente", precision = 19, scale = 2)
+    private BigDecimal valorParcelaRecorrente;
+
+    // ─── Parcelas ───────────────────────────────────────────────
     @OneToMany(mappedBy = "divida", cascade = CascadeType.ALL)
     @Builder.Default
     private List<ParcelaDivida> parcelas = new ArrayList<>();

@@ -1,5 +1,6 @@
 package com.gestao.financeiro.dto.response;
 
+import com.gestao.financeiro.entity.enums.Periodicidade;
 import com.gestao.financeiro.entity.enums.StatusDivida;
 import com.gestao.financeiro.entity.enums.TipoDivida;
 
@@ -21,5 +22,12 @@ public record DividaResponse(
         StatusDivida status,
         String observacao,
         List<ParcelaDividaResponse> parcelas,
-        LocalDateTime createdAt
+        Integer totalParcelas,
+        LocalDateTime createdAt,
+        // ─── Recorrência ──────────────
+        Boolean recorrente,
+        Periodicidade periodicidade,
+        Integer diaVencimento,
+        BigDecimal valorParcelaRecorrente
 ) {}
+

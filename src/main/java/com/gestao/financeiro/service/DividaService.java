@@ -3,6 +3,7 @@ package com.gestao.financeiro.service;
 import com.gestao.financeiro.dto.request.DividaRequest;
 import com.gestao.financeiro.dto.request.PagarParcelaDividaRequest;
 import com.gestao.financeiro.dto.response.DividaResponse;
+import com.gestao.financeiro.dto.response.DividasResumoResponse;
 import com.gestao.financeiro.dto.response.ParcelaDividaResponse;
 import com.gestao.financeiro.entity.*;
 import com.gestao.financeiro.entity.enums.*;
@@ -15,12 +16,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -39,11 +43,49 @@ public class DividaService {
 
 
 
-    public Page<DividaResponse> listar(TipoDivida tipo, Pageable pageable) {
-        if (tipo != null) {
-            return dividaRepository.findByTipo(tipo, pageable).map(dividaMapper::toResponse);
+    public DividasResumoResponse listar(TipoDivida tipo, Long pessoaId, Integer ano, Integer mes, StatusDivida status, Pageable pageable) {
+        String statusStr = status != null ? status.name() : null;
+        
+        Page<Divida> page = dividaRepository.buscarComFiltros(tipo, pessoaId, ano, mes, statusStr, pageable);
+        
+        BigDecimal totalGeral;
+        if (ano != null) {
+            totalGeral = dividaRepository.somarParcelasNoMes(tipo, pessoaId, ano, mes, statusStr);
+        } else {
+            totalGeral = dividaRepository.somarValorRestante(tipo, pessoaId, statusStr);
         }
-        return dividaRepository.findAll(pageable).map(dividaMapper::toResponse);
+
+        if (totalGeral == null) totalGeral = BigDecimal.ZERO;
+
+        return new DividasResumoResponse(
+                page.getContent().stream().map(d -> dividaMapper.toResponse(d, ano, mes, status)).toList(),
+                totalGeral,
+                page.getTotalElements(),
+                page.getTotalPages(),
+                page.getNumber()
+        );
+    }
+
+    public DividasResumoResponse listarTodos(TipoDivida tipo, Long pessoaId, Integer ano, Integer mes, StatusDivida status) {
+        String statusStr = status != null ? status.name() : null;
+
+        java.util.List<Divida> dividas = dividaRepository.buscarComFiltrosSemPaginacao(tipo, pessoaId, ano, mes, statusStr);
+
+        BigDecimal totalGeral;
+        if (ano != null) {
+            totalGeral = dividaRepository.somarParcelasNoMes(tipo, pessoaId, ano, mes, statusStr);
+        } else {
+            totalGeral = dividaRepository.somarValorRestante(tipo, pessoaId, statusStr);
+        }
+        if (totalGeral == null) totalGeral = BigDecimal.ZERO;
+
+        return new DividasResumoResponse(
+                dividas.stream().map(d -> dividaMapper.toResponse(d, ano, mes, status)).toList(),
+                totalGeral,
+                dividas.size(),
+                1,
+                0
+        );
     }
 
     public DividaResponse buscarPorId(Long id) {
@@ -67,33 +109,61 @@ public class DividaService {
         pessoa.setTotalEmprestimos(pessoa.getTotalEmprestimos() + 1);
         pessoaRepository.save(pessoa);
 
-        // Gera as parcelas
-        BigDecimal valorParcela = request.valorTotal()
-                .divide(BigDecimal.valueOf(request.parcelas()), 2, RoundingMode.HALF_UP);
+        boolean isRecorrente = Boolean.TRUE.equals(request.recorrente());
 
-        LocalDate dataVencimentoBase = request.dataInicio();
+        if (isRecorrente) {
+            // Dívida recorrente: gera primeira parcela se data de início já passou ou é hoje
+            BigDecimal valorParcela = request.valorParcelaRecorrente() != null
+                    ? request.valorParcelaRecorrente()
+                    : request.valorTotal();
 
-        for (int i = 0; i < request.parcelas(); i++) {
-            BigDecimal valorEstaParcela = valorParcela;
-            
-            // Corrige arredondamento na última parcela
-            if (i == request.parcelas() - 1) {
-                BigDecimal jaDistribuido = valorParcela.multiply(BigDecimal.valueOf(request.parcelas() - 1));
-                valorEstaParcela = request.valorTotal().subtract(jaDistribuido);
+            divida.setValorTotal(valorParcela);
+            divida.setValorRestante(valorParcela);
+
+            LocalDate hoje = LocalDate.now();
+            if (!request.dataInicio().isAfter(hoje)) {
+                int dia = request.diaVencimento() != null
+                        ? Math.min(request.diaVencimento(), request.dataInicio().lengthOfMonth())
+                        : request.dataInicio().getDayOfMonth();
+                LocalDate vencimento = request.dataInicio().withDayOfMonth(dia);
+
+                ParcelaDivida parcela = ParcelaDivida.builder()
+                        .numeroParcela(1)
+                        .valor(valorParcela)
+                        .dataVencimento(vencimento)
+                        .build();
+                divida.adicionarParcela(parcela);
             }
+        } else {
+            // Dívida parcelada tradicional
+            int numParcelas = request.parcelas() != null ? request.parcelas() : 1;
+            BigDecimal valorParcela = request.valorTotal()
+                    .divide(BigDecimal.valueOf(numParcelas), 2, RoundingMode.HALF_UP);
 
-            LocalDate vencimento = dataVencimentoBase.plusMonths(i);
+            LocalDate dataVencimentoBase = request.dataInicio();
 
-            ParcelaDivida parcela = ParcelaDivida.builder()
-                    .numeroParcela(i + 1)
-                    .valor(valorEstaParcela)
-                    .dataVencimento(vencimento)
-                    .build();
-            divida.adicionarParcela(parcela);
+            for (int i = 0; i < numParcelas; i++) {
+                BigDecimal valorEstaParcela = valorParcela;
+
+                if (i == numParcelas - 1) {
+                    BigDecimal jaDistribuido = valorParcela.multiply(BigDecimal.valueOf(numParcelas - 1));
+                    valorEstaParcela = request.valorTotal().subtract(jaDistribuido);
+                }
+
+                LocalDate vencimento = dataVencimentoBase.plusMonths(i);
+
+                ParcelaDivida parcela = ParcelaDivida.builder()
+                        .numeroParcela(i + 1)
+                        .valor(valorEstaParcela)
+                        .dataVencimento(vencimento)
+                        .build();
+                divida.adicionarParcela(parcela);
+            }
         }
 
         divida = dividaRepository.save(divida);
-        log.info("[tenant={}] Dívida criada: id={} pessoa={} valor={}", tenantId, divida.getId(), pessoa.getNome(), request.valorTotal());
+        log.info("[tenant={}] Dívida criada: id={} pessoa={} valor={} recorrente={}",
+                tenantId, divida.getId(), pessoa.getNome(), request.valorTotal(), isRecorrente);
 
         return dividaMapper.toResponse(divida);
     }
@@ -198,11 +268,92 @@ public class DividaService {
     }
 
     @Transactional
+    public DividaResponse cancelarRecorrencia(Long id) {
+        Divida divida = findById(id);
+        if (!Boolean.TRUE.equals(divida.getRecorrente())) {
+            throw new BusinessException("Esta dívida não é recorrente.");
+        }
+        divida.setRecorrente(false);
+        dividaRepository.save(divida);
+        log.info("[tenant={}] Recorrência cancelada para dívida id={}", divida.getTenantId(), id);
+        return dividaMapper.toResponse(divida);
+    }
+
+    @Transactional
     public void deletar(Long id) {
         Divida divida = findById(id);
         divida.softDelete();
         dividaRepository.save(divida);
         log.info("[tenant={}] Dívida deletada: id={}", divida.getTenantId(), id);
+    }
+
+    // ─── Scheduler de Dívidas Recorrentes ────────────────────────
+
+    /**
+     * Roda todo dia às 06:05 — gera parcelas para dívidas recorrentes ativas.
+     */
+    @Scheduled(cron = "0 5 6 * * *")
+    @Transactional
+    public void processarDividasRecorrentes() {
+        log.info("Iniciando processamento de dívidas recorrentes...");
+        LocalDate hoje = LocalDate.now();
+        YearMonth mesAtual = YearMonth.from(hoje);
+
+        List<Divida> recorrentes = dividaRepository.findByRecorrenteTrue();
+        int geradas = 0;
+
+        for (Divida divida : recorrentes) {
+            // Verificar se passou da data fim
+            if (divida.getDataFim() != null && hoje.isAfter(divida.getDataFim())) {
+                divida.setRecorrente(false);
+                dividaRepository.save(divida);
+                log.info("[tenant={}] Dívida recorrente id={} encerrada (data fim atingida)", divida.getTenantId(), divida.getId());
+                continue;
+            }
+
+            // Verificar se já existe parcela para este mês
+            int dia = divida.getDiaVencimento() != null
+                    ? Math.min(divida.getDiaVencimento(), mesAtual.lengthOfMonth())
+                    : divida.getDataInicio().getDayOfMonth();
+
+            // Só gera se o dia de vencimento já chegou ou passou neste mês
+            if (hoje.getDayOfMonth() < dia) continue;
+
+            LocalDate vencimentoMes = mesAtual.atDay(dia);
+
+            boolean jaExiste = divida.getParcelas().stream()
+                    .anyMatch(p -> {
+                        YearMonth ymParcela = YearMonth.from(p.getDataVencimento());
+                        return ymParcela.equals(mesAtual);
+                    });
+
+            if (jaExiste) continue;
+
+            // Gerar nova parcela
+            BigDecimal valor = divida.getValorParcelaRecorrente() != null
+                    ? divida.getValorParcelaRecorrente()
+                    : divida.getValorTotal();
+
+            int proximoNumero = divida.getParcelas().size() + 1;
+
+            ParcelaDivida parcela = ParcelaDivida.builder()
+                    .numeroParcela(proximoNumero)
+                    .valor(valor)
+                    .dataVencimento(vencimentoMes)
+                    .build();
+            divida.adicionarParcela(parcela);
+
+            // Atualizar valorTotal acumulado e valorRestante
+            divida.setValorTotal(divida.getValorTotal().add(valor));
+            divida.setValorRestante(divida.getValorRestante().add(valor));
+
+            dividaRepository.save(divida);
+            geradas++;
+            log.info("[tenant={}] Parcela #{} gerada para dívida recorrente id={} valor={}",
+                    divida.getTenantId(), proximoNumero, divida.getId(), valor);
+        }
+
+        log.info("Processamento de dívidas recorrentes finalizado: {} parcelas geradas", geradas);
     }
 
     private Divida findById(Long id) {

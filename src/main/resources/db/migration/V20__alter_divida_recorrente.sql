@@ -1,0 +1,4 @@
+ALTER TABLE divida ADD COLUMN recorrente BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE divida ADD COLUMN periodicidade VARCHAR(20);
+ALTER TABLE divida ADD COLUMN dia_vencimento INTEGER;
+ALTER TABLE divida ADD COLUMN valor_parcela_recorrente DECIMAL(19,2);

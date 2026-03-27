@@ -13,7 +13,30 @@ import java.util.List;
 public class DividaMapper {
 
     public DividaResponse toResponse(Divida entity) {
+        return toResponse(entity, null, null, null);
+    }
+
+    public DividaResponse toResponse(Divida entity, Integer ano, Integer mes, com.gestao.financeiro.entity.enums.StatusDivida status) {
         List<ParcelaDividaResponse> parcelas = entity.getParcelas().stream()
+                .filter(p -> {
+                    if (ano != null) {
+                        if (p.getDataVencimento().getYear() != (int)ano || (mes != null && p.getDataVencimento().getMonthValue() != (int)mes)) {
+                            return false;
+                        }
+                    }
+                    
+                    if (status != null) {
+                        if (status == com.gestao.financeiro.entity.enums.StatusDivida.PENDENTE) {
+                            return p.getStatus() != com.gestao.financeiro.entity.enums.StatusTransacao.PAGO;
+                        } else if (status == com.gestao.financeiro.entity.enums.StatusDivida.PAGA) {
+                            return p.getStatus() == com.gestao.financeiro.entity.enums.StatusTransacao.PAGO;
+                        } else if (status == com.gestao.financeiro.entity.enums.StatusDivida.ATRASADA) {
+                            return p.getStatus() == com.gestao.financeiro.entity.enums.StatusTransacao.ATRASADO;
+                        }
+                    }
+                    
+                    return true;
+                })
                 .map(this::toParcelaResponse)
                 .toList();
 
@@ -30,7 +53,12 @@ public class DividaMapper {
                 entity.getStatus(),
                 entity.getObservacao(),
                 parcelas,
-                entity.getCreatedAt()
+                entity.getParcelas().size(),
+                entity.getCreatedAt(),
+                entity.getRecorrente(),
+                entity.getPeriodicidade(),
+                entity.getDiaVencimento(),
+                entity.getValorParcelaRecorrente()
         );
     }
 
@@ -51,10 +79,15 @@ public class DividaMapper {
                 .descricao(request.descricao())
                 .tipo(request.tipo())
                 .valorTotal(request.valorTotal())
-                .valorRestante(request.valorTotal()) // Inicia com o valor total
+                .valorRestante(request.valorTotal())
                 .dataInicio(request.dataInicio())
                 .dataFim(request.dataFim())
                 .observacao(request.observacao())
+                .recorrente(request.recorrente() != null ? request.recorrente() : false)
+                .periodicidade(request.periodicidade())
+                .diaVencimento(request.diaVencimento())
+                .valorParcelaRecorrente(request.valorParcelaRecorrente())
                 .build();
     }
 }
+
