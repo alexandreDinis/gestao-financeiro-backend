@@ -15,6 +15,7 @@ public class UsuarioMapper {
                 entity.getEmail(),
                 entity.getRole(),
                 entity.getAtivo(),
+                entity.getTenantId(),
                 entity.getCreatedAt()
         );
     }

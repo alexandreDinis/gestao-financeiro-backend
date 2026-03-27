@@ -27,11 +27,34 @@ public interface ContaRepository extends JpaRepository<Conta, Long> {
      */
     @Query("""
         SELECT c.saldoInicial
-            + COALESCE(SUM(CASE WHEN l.direcao = 'CREDITO' THEN l.valor ELSE 0 END), 0)
-            - COALESCE(SUM(CASE WHEN l.direcao = 'DEBITO' THEN l.valor ELSE 0 END), 0)
+            + COALESCE(SUM(
+                CASE 
+                    WHEN l.direcao = 'CREDITO'
+                    AND l.transacao.deletedAt IS NULL
+                    AND l.transacao.status <> 'CANCELADO'
+                    AND (
+                        l.transacao.status = 'PAGO'
+                        OR (c.tipo = 'CARTAO_CREDITO' AND l.transacao.status = 'PENDENTE')
+                    )
+                    THEN l.valor ELSE 0 
+                END
+            ), 0)
+            - COALESCE(SUM(
+                CASE 
+                    WHEN l.direcao = 'DEBITO'
+                    AND l.transacao.deletedAt IS NULL
+                    AND l.transacao.status <> 'CANCELADO'
+                    AND (
+                        l.transacao.status = 'PAGO'
+                        OR (c.tipo = 'CARTAO_CREDITO' AND l.transacao.status = 'PENDENTE')
+                    )
+                    THEN l.valor ELSE 0 
+                END
+            ), 0)
         FROM Conta c
         LEFT JOIN Lancamento l ON l.conta.id = c.id AND l.deletedAt IS NULL
         WHERE c.id = :contaId
+        GROUP BY c.id, c.saldoInicial
     """)
     BigDecimal calcularSaldo(@Param("contaId") Long contaId);
 }

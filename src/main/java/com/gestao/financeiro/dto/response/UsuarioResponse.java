@@ -10,5 +10,6 @@ public record UsuarioResponse(
         String email,
         RoleUsuario role,
         Boolean ativo,
+        Long tenantId,
         LocalDateTime createdAt
 ) {}

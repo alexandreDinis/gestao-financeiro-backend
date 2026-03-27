@@ -32,6 +32,10 @@ public class ApiResponse<T> {
         return ok(data);
     }
 
+    public static ApiResponse<Void> noContent() {
+        return new ApiResponse<>();
+    }
+
     public static <T> ApiResponse<List<T>> ok(Page<T> page) {
         ApiResponse<List<T>> response = new ApiResponse<>();
         response.setData(page.getContent());

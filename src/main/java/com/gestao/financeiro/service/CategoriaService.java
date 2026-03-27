@@ -8,6 +8,7 @@ import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.CategoriaMapper;
 import com.gestao.financeiro.repository.CategoriaRepository;
+import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -26,7 +27,7 @@ public class CategoriaService {
     private final CategoriaRepository categoriaRepository;
     private final CategoriaMapper categoriaMapper;
 
-    private static final Long DEFAULT_TENANT_ID = 1L;
+
 
     public Page<CategoriaResponse> listar(TipoCategoria tipo, Pageable pageable) {
         if (tipo != null) {
@@ -51,12 +52,17 @@ public class CategoriaService {
 
     @Transactional
     public CategoriaResponse criar(CategoriaRequest request) {
-        if (categoriaRepository.existsByNomeAndTenantId(request.nome(), DEFAULT_TENANT_ID)) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            throw new BusinessException("Tenant ID não encontrado no contexto");
+        }
+
+        if (categoriaRepository.existsByNomeAndTenantId(request.nome(), tenantId)) {
             throw new BusinessException("Já existe uma categoria com o nome: " + request.nome());
         }
 
         Categoria categoria = categoriaMapper.toEntity(request);
-        categoria.setTenantId(DEFAULT_TENANT_ID);
+        categoria.setTenantId(tenantId);
 
         // Vincula categoria pai
         if (request.categoriaPaiId() != null) {
@@ -65,7 +71,7 @@ public class CategoriaService {
         }
 
         categoria = categoriaRepository.save(categoria);
-        log.info("[tenant={}] Categoria criada: id={} nome={} tipo={}", DEFAULT_TENANT_ID, categoria.getId(), categoria.getNome(), categoria.getTipo());
+        log.info("[tenant={}] Categoria criada: id={} nome={} tipo={}", tenantId, categoria.getId(), categoria.getNome(), categoria.getTipo());
 
         return categoriaMapper.toResponse(categoria);
     }

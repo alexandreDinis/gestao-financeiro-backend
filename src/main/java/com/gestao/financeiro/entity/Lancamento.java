@@ -2,6 +2,7 @@ package com.gestao.financeiro.entity;
 
 import com.gestao.financeiro.entity.enums.DirecaoLancamento;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -16,6 +17,7 @@ import java.math.BigDecimal;
  * Lancamentos são IMUTÁVEIS — para corrigir, cria-se estorno (nova transação).
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "lancamento", indexes = {
         @Index(name = "idx_lancamento_tenant_conta", columnList = "tenant_id, conta_id"),
         @Index(name = "idx_lancamento_conta_direcao", columnList = "conta_id, direcao"),

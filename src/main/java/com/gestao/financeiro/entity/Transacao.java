@@ -2,11 +2,15 @@ package com.gestao.financeiro.entity;
 
 import com.gestao.financeiro.entity.enums.StatusTransacao;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
+import com.gestao.financeiro.entity.enums.TipoDespesa;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,17 +23,24 @@ import java.util.List;
  * - Transferência: 1 DEBITO na origem + 1 CREDITO no destino
  */
 @Entity
-@Table(name = "transacao", indexes = {
+@Table(name = "transacao", 
+    indexes = {
         @Index(name = "idx_transacao_tenant_data", columnList = "tenant_id, data"),
         @Index(name = "idx_transacao_tenant_categoria", columnList = "tenant_id, categoria_id"),
         @Index(name = "idx_transacao_tenant_status", columnList = "tenant_id, status"),
-        @Index(name = "idx_transacao_idempotency", columnList = "idempotency_key")
-})
+        @Index(name = "idx_transacao_idempotency", columnList = "idempotency_key"),
+        @Index(name = "idx_transacao_recorrencia_referencia", columnList = "recorrencia_id, referencia")
+    },
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uk_transacao_recorrencia_referencia", columnNames = {"recorrencia_id", "referencia"})
+    }
+)
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@SQLRestriction("deleted_at IS NULL")
 public class Transacao extends TenantEntity {
 
     @Column(nullable = false)
@@ -55,6 +66,37 @@ public class Transacao extends TenantEntity {
     @Column(nullable = false)
     @Builder.Default
     private StatusTransacao status = StatusTransacao.PENDENTE;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "tipo_despesa")
+    private TipoDespesa tipoDespesa;
+
+    @Column(name = "referencia")
+    private YearMonth referencia;
+
+    @Column(name = "gerado_automaticamente")
+    @Builder.Default
+    private Boolean geradoAutomaticamente = false;
+
+    @Column(name = "recorrencia_id")
+    private Long recorrenciaId;
+
+    @Column(name = "criado_em", updatable = false)
+    private LocalDateTime criadoEm;
+
+    @Column(name = "atualizado_em")
+    private LocalDateTime atualizadoEm;
+
+    @PrePersist
+    protected void onCreate() {
+        criadoEm = LocalDateTime.now();
+        atualizadoEm = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        atualizadoEm = LocalDateTime.now();
+    }
 
     private String observacao;
 
