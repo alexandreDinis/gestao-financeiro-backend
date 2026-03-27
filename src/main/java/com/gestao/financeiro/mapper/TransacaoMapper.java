@@ -29,14 +29,17 @@ public class TransacaoMapper {
                 entity.getId(),
                 entity.getDescricao(),
                 entity.getValor(),
-                entity.getData(),
-                entity.getDataVencimento(),
-                entity.getDataPagamento(),
+                entity.getData() != null ? entity.getData().toString() : null,
+                entity.getDataVencimento() != null ? entity.getDataVencimento().toString() : null,
+                entity.getDataPagamento() != null ? entity.getDataPagamento().toString() : null,
                 entity.getTipo(),
+                entity.getTipoDespesa(),
                 entity.getStatus(),
                 entity.getObservacao(),
                 categoriaResp,
                 lancamentosResp,
+                entity.getGeradoAutomaticamente(),
+                entity.getRecorrenciaId(),
                 entity.getCreatedAt()
         );
     }

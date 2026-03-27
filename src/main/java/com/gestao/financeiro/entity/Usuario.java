@@ -2,6 +2,7 @@ package com.gestao.financeiro.entity;
 
 import com.gestao.financeiro.entity.enums.RoleUsuario;
 import jakarta.persistence.*;
+import org.hibernate.annotations.SQLRestriction;
 import lombok.*;
 
 /**
@@ -12,6 +13,7 @@ import lombok.*;
  * Fase 5: JWT + Spring Security.
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "usuario", indexes = {
         @Index(name = "idx_usuario_tenant", columnList = "tenant_id"),
         @Index(name = "idx_usuario_email", columnList = "email")

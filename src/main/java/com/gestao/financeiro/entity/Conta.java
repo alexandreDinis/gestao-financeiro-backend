@@ -6,11 +6,14 @@ import lombok.*;
 
 import java.math.BigDecimal;
 
+import org.hibernate.annotations.SQLRestriction;
+
 /**
  * Conta financeira (corrente, poupança, carteira, investimento, cartão de crédito).
  * Saldo é cache: source of truth = saldoInicial + SUM(lancamentos).
  */
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "conta", indexes = {
         @Index(name = "idx_conta_tenant", columnList = "tenant_id")
 })

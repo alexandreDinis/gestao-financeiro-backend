@@ -6,12 +6,15 @@ import com.gestao.financeiro.entity.*;
 import com.gestao.financeiro.entity.enums.DirecaoLancamento;
 import com.gestao.financeiro.entity.enums.StatusTransacao;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
+import com.gestao.financeiro.entity.enums.TipoDespesa;
 import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.TransacaoMapper;
 import com.gestao.financeiro.repository.ContaRepository;
 import com.gestao.financeiro.repository.CategoriaRepository;
 import com.gestao.financeiro.repository.TransacaoRepository;
+import com.gestao.financeiro.repository.ParcelaRepository;
+import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -19,8 +22,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -28,21 +31,25 @@ import java.time.LocalDate;
 @Slf4j
 public class TransacaoService {
 
-    private final TransacaoRepository transacaoRepository;
     private final ContaRepository contaRepository;
     private final CategoriaRepository categoriaRepository;
+    private final TransacaoRepository transacaoRepository;
+    private final ParcelaRepository parcelaRepository;
     private final TransacaoMapper transacaoMapper;
+    private final CartaoCreditoService cartaoCreditoService;
 
-    private static final Long DEFAULT_TENANT_ID = 1L;
+
 
     public Page<TransacaoResponse> listar(
             LocalDate dataInicio, LocalDate dataFim,
             Long categoriaId, Long contaId,
-            TipoTransacao tipo, StatusTransacao status,
+            TipoTransacao tipo, TipoDespesa tipoDespesa,
+            StatusTransacao status, Boolean geradoAutomaticamente,
+            String busca,
             Pageable pageable) {
 
         return transacaoRepository.buscarComFiltros(
-                dataInicio, dataFim, categoriaId, contaId, tipo, status, pageable
+                dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, busca, pageable
         ).map(transacaoMapper::toResponse);
     }
 
@@ -59,23 +66,30 @@ public class TransacaoService {
      */
     @Transactional
     public TransacaoResponse criar(TransacaoRequest request) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            throw new BusinessException("Tenant ID não encontrado no contexto");
+        }
+
         // Idempotência
         if (request.idempotencyKey() != null) {
             var existente = transacaoRepository.findByIdempotencyKey(request.idempotencyKey());
             if (existente.isPresent()) {
-                log.info("[tenant={}] Transação idempotente retornada: key={}", DEFAULT_TENANT_ID, request.idempotencyKey());
+                log.info("[tenant={}] Transação idempotente retornada: key={}", tenantId, request.idempotencyKey());
                 return transacaoMapper.toResponse(existente.get());
             }
         }
 
         // Validações
-        Conta contaOrigem = contaRepository.findById(request.contaOrigemId())
-                .orElseThrow(() -> new ResourceNotFoundException("Conta de origem", request.contaOrigemId()));
+        Long origemId = Objects.requireNonNull(request.contaOrigemId(), "ID da conta de origem não pode ser nulo");
+        Conta contaOrigem = contaRepository.findById(origemId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conta de origem", origemId));
 
         Categoria categoria = null;
         if (request.categoriaId() != null) {
-            categoria = categoriaRepository.findById(request.categoriaId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
+            Long catId = request.categoriaId();
+            categoria = categoriaRepository.findById(catId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Categoria", catId));
         }
 
         if (request.tipo() == TipoTransacao.TRANSFERENCIA && request.contaDestinoId() == null) {
@@ -87,6 +101,16 @@ public class TransacaoService {
             throw new BusinessException("Conta de origem e destino não podem ser iguais.");
         }
 
+        // Determina status inicial
+        StatusTransacao statusInicial = request.status();
+        if (statusInicial == null) {
+            // Default: PAGO se a data for hoje ou passada, E não for cartão de crédito
+            boolean isCartao = contaOrigem.getTipo() == com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO;
+            boolean isFutura = request.data().isAfter(LocalDate.now());
+            
+            statusInicial = (isCartao || isFutura) ? StatusTransacao.PENDENTE : StatusTransacao.PAGO;
+        }
+
         // Monta transação
         Transacao transacao = Transacao.builder()
                 .descricao(request.descricao())
@@ -94,59 +118,73 @@ public class TransacaoService {
                 .data(request.data())
                 .dataVencimento(request.dataVencimento())
                 .tipo(request.tipo())
-                .status(StatusTransacao.PENDENTE)
+                .tipoDespesa(request.tipoDespesa())
+                .status(statusInicial)
                 .observacao(request.observacao())
                 .idempotencyKey(request.idempotencyKey())
+                .geradoAutomaticamente(request.geradoAutomaticamente() != null && request.geradoAutomaticamente())
+                .recorrenciaId(request.recorrenciaId())
                 .categoria(categoria)
                 .build();
-        transacao.setTenantId(DEFAULT_TENANT_ID);
+        transacao.setTenantId(tenantId);
+
+        // Salva a transação inicialmente para garantir que tenha um ID 
+        // caso precise ser referenciada por outras entidades (ex: Parcelas de Cartão)
+        transacao = transacaoRepository.save(transacao);
 
         // Gera lançamentos contábeis
-        switch (request.tipo()) {
-            case DESPESA -> {
-                Lancamento debito = Lancamento.builder()
-                        .conta(contaOrigem)
-                        .valor(request.valor())
-                        .direcao(DirecaoLancamento.DEBITO)
-                        .descricao("Despesa: " + request.descricao())
-                        .build();
-                transacao.addLancamento(debito);
-            }
-            case RECEITA -> {
-                Lancamento credito = Lancamento.builder()
-                        .conta(contaOrigem)
-                        .valor(request.valor())
-                        .direcao(DirecaoLancamento.CREDITO)
-                        .descricao("Receita: " + request.descricao())
-                        .build();
-                transacao.addLancamento(credito);
-            }
-            case TRANSFERENCIA -> {
-                Conta contaDestino = contaRepository.findById(request.contaDestinoId())
-                        .orElseThrow(() -> new ResourceNotFoundException("Conta de destino", request.contaDestinoId()));
+        if (contaOrigem.getTipo() == com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO 
+                && request.tipo() == TipoTransacao.DESPESA) {
+            // Se for cartão, o serviço de cartão lida com Lancamento + Fatura + Parcela
+            cartaoCreditoService.registrarTransacaoNoCartao(transacao, contaOrigem.getId());
+        } else {
+            switch (request.tipo()) {
+                case DESPESA -> {
+                    Lancamento debito = Lancamento.builder()
+                            .conta(contaOrigem)
+                            .valor(request.valor())
+                            .direcao(DirecaoLancamento.DEBITO)
+                            .descricao("Despesa: " + request.descricao())
+                            .build();
+                    transacao.addLancamento(debito);
+                }
+                case RECEITA -> {
+                    Lancamento credito = Lancamento.builder()
+                            .conta(contaOrigem)
+                            .valor(request.valor())
+                            .direcao(DirecaoLancamento.CREDITO)
+                            .descricao("Receita: " + request.descricao())
+                            .build();
+                    transacao.addLancamento(credito);
+                }
+                case TRANSFERENCIA -> {
+                    Long destinoId = Objects.requireNonNull(request.contaDestinoId(), "ID da conta de destino não pode ser nulo");
+                    Conta contaDestino = contaRepository.findById(destinoId)
+                            .orElseThrow(() -> new ResourceNotFoundException("Conta de destino", destinoId));
 
-                Lancamento debito = Lancamento.builder()
-                        .conta(contaOrigem)
-                        .valor(request.valor())
-                        .direcao(DirecaoLancamento.DEBITO)
-                        .descricao("Transferência para " + contaDestino.getNome())
-                        .build();
+                    Lancamento debito = Lancamento.builder()
+                            .conta(contaOrigem)
+                            .valor(request.valor())
+                            .direcao(DirecaoLancamento.DEBITO)
+                            .descricao("Transferência para " + contaDestino.getNome())
+                            .build();
 
-                Lancamento credito = Lancamento.builder()
-                        .conta(contaDestino)
-                        .valor(request.valor())
-                        .direcao(DirecaoLancamento.CREDITO)
-                        .descricao("Transferência de " + contaOrigem.getNome())
-                        .build();
+                    Lancamento credito = Lancamento.builder()
+                            .conta(contaDestino)
+                            .valor(request.valor())
+                            .direcao(DirecaoLancamento.CREDITO)
+                            .descricao("Transferência de " + contaOrigem.getNome())
+                            .build();
 
-                transacao.addLancamento(debito);
-                transacao.addLancamento(credito);
+                    transacao.addLancamento(debito);
+                    transacao.addLancamento(credito);
+                }
             }
         }
 
         transacao = transacaoRepository.save(transacao);
         log.info("[tenant={}] Transação criada: id={} tipo={} valor={} lancamentos={}",
-                DEFAULT_TENANT_ID, transacao.getId(), transacao.getTipo(), transacao.getValor(),
+                tenantId, transacao.getId(), transacao.getTipo(), transacao.getValor(),
                 transacao.getLancamentos().size());
 
         return transacaoMapper.toResponse(transacao);
@@ -215,6 +253,14 @@ public class TransacaoService {
             estorno.addLancamento(lancamentoEstorno);
         }
 
+        // Remove parcelas se for cancelamento de compra no cartão
+        var parcelas = parcelaRepository.findByTransacaoId(id);
+        if (!parcelas.isEmpty()) {
+            parcelaRepository.deleteAll(parcelas);
+            log.info("[tenant={}] {} parcelas de cartão removidas devido a cancelamento da transação #{}", 
+                transacao.getTenantId(), parcelas.size(), id);
+        }
+
         transacaoRepository.save(transacao);
         transacaoRepository.save(estorno);
 
@@ -227,13 +273,37 @@ public class TransacaoService {
     @Transactional
     public void deletar(Long id) {
         Transacao transacao = findById(id);
+        
+        // Remove parcelas vinculadas se for compra de cartão
+        var parcelas = parcelaRepository.findByTransacaoId(id);
+        if (!parcelas.isEmpty()) {
+            parcelaRepository.deleteAll(parcelas);
+            log.info("[tenant={}] {} parcelas de cartão removidas devido a exclusão da transação #{}", 
+                transacao.getTenantId(), parcelas.size(), id);
+        }
+
         transacao.softDelete();
         transacaoRepository.save(transacao);
         log.info("[tenant={}] Transação soft-deleted: id={}", transacao.getTenantId(), id);
     }
 
+    @Transactional
+    public TransacaoResponse tornarManual(Long id) {
+        Transacao t = findById(id);
+        if (!t.getGeradoAutomaticamente()) {
+            throw new BusinessException("Transação já é manual.");
+        }
+        
+        t.setGeradoAutomaticamente(false);
+        t.setRecorrenciaId(null);
+        t.setReferencia(null);
+        
+        return transacaoMapper.toResponse(transacaoRepository.save(t));
+    }
+
     private Transacao findById(Long id) {
-        return transacaoRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Transação", id));
+        Long safeId = Objects.requireNonNull(id, "ID da transação não pode ser nulo");
+        return transacaoRepository.findById(safeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Transação", safeId));
     }
 }

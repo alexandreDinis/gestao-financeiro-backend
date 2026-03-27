@@ -1,0 +1,107 @@
+# ===========================
+# Ambiente e Segredos
+# ===========================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.keystore
+
+# ===========================
+# AI / Gemini Generated
+# ===========================
+.gemini/
+
+# ===========================
+# Java / Maven
+# ===========================
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+hs_err_pid*
+replay_pid*
+
+# ===========================
+# Spring Boot
+# ===========================
+backend/data/
+*.db
+*.mv.db
+*.trace.db
+
+# ===========================
+# IDE
+# ===========================
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.vscode/
+*.code-workspace
+.project
+.classpath
+.settings/
+bin/
+
+# ===========================
+# Sistema Operacional
+# ===========================
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
+*.swo
+
+# ===========================
+# Node / Frontend
+# ===========================
+node_modules/
+dist/
+build/
+.next/
+.cache/
+*.tsbuildinfo
+
+# ===========================
+# Docker
+# ===========================
+docker-compose.override.yml
+
+# ===========================
+# Logs
+# ===========================
+logs/
+*.log
+*.log.*
+
+# ===========================
+# Temporários
+# ===========================
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+
+# ===========================
+# Credenciais e Config Local
+# ===========================
+application-local.yml
+application-local.properties
+application-secrets.yml
+application-secrets.properties
+*-secret.yml
+*-secret.properties
+firebase-*.json
+google-services.json
+serviceAccountKey.json
+credentials.json

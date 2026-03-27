@@ -41,10 +41,12 @@ public class TenantFilterConfig implements Filter {
             return;
         }
 
-        Long tenantId = DEFAULT_TENANT_ID;
+        Long tenantId = TenantContext.getTenantId();
 
-        Session session = entityManager.unwrap(Session.class);
-        session.enableFilter("tenantFilter").setParameter("tenantId", tenantId);
+        if (tenantId != null) {
+            Session session = entityManager.unwrap(Session.class);
+            session.enableFilter("tenantFilter").setParameter("tenantId", tenantId);
+        }
 
         log.debug("[tenant={}] Request: {} {}", tenantId, httpRequest.getMethod(), path);
 
