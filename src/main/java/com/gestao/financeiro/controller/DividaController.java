@@ -1,6 +1,7 @@
 package com.gestao.financeiro.controller;
 
 import com.gestao.financeiro.dto.request.DividaRequest;
+import com.gestao.financeiro.dto.request.PagarMultiplasParcelasRequest;
 import com.gestao.financeiro.dto.request.PagarParcelaDividaRequest;
 import com.gestao.financeiro.dto.response.ApiResponse;
 import com.gestao.financeiro.dto.response.DividaResponse;
@@ -93,6 +94,12 @@ public class DividaController {
         return ApiResponse.ok(dividaService.pagarParcela(parcelaId, request));
     }
 
+    @PutMapping("/parcelas/pagar-lote")
+    public ApiResponse<List<ParcelaDividaResponse>> pagarLote(
+            @Valid @RequestBody PagarMultiplasParcelasRequest request) {
+        return ApiResponse.ok(dividaService.pagarMultiplasParcelas(request));
+    }
+
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deletar(@PathVariable Long id) {
@@ -102,5 +109,11 @@ public class DividaController {
     @PutMapping("/{id}/cancelar-recorrencia")
     public ApiResponse<DividaResponse> cancelarRecorrencia(@PathVariable Long id) {
         return ApiResponse.ok(dividaService.cancelarRecorrencia(id));
+    }
+
+    @PostMapping("/processar-recorrencias")
+    public ApiResponse<Void> processarRecorrencias() {
+        dividaService.processarDividasRecorrentes();
+        return ApiResponse.noContent();
     }
 }

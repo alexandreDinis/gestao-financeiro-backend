@@ -98,6 +98,7 @@ public class ContaService {
     }
 
     private Conta findById(Long id) {
+        com.gestao.financeiro.util.ValidationUtils.validateId(id, "Conta");
         return contaRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Conta", id));
     }

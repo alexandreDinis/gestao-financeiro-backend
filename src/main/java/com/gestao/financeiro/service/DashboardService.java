@@ -3,14 +3,12 @@ package com.gestao.financeiro.service;
 import com.gestao.financeiro.dto.response.DashboardResponse;
 import com.gestao.financeiro.dto.response.DashboardResponse.*;
 import com.gestao.financeiro.entity.*;
-import com.gestao.financeiro.entity.enums.StatusTransacao;
 import com.gestao.financeiro.entity.enums.TipoConta;
 import com.gestao.financeiro.entity.enums.TipoDivida;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
 import com.gestao.financeiro.repository.*;
 import com.gestao.financeiro.repository.projection.GastoCategoriaProjection;
 import com.gestao.financeiro.repository.projection.ResumoContaPeriodoProjection;
-import com.gestao.financeiro.service.TransacaoRecorrenteService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -23,6 +21,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.Month;
 import java.time.YearMonth;
+import java.time.ZoneId;
 import java.time.format.TextStyle;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
@@ -173,19 +172,46 @@ public class DashboardService {
     private ProjecaoMes buildProjecao(LocalDate hoje, LocalDate fimMes, ResumoMes mesAtual) {
         int diasDecorridos = hoje.getDayOfMonth();
         int diasTotais     = fimMes.getDayOfMonth();
+        LocalDate inicioMes = hoje.with(TemporalAdjusters.firstDayOfMonth());
 
         if (diasDecorridos == 0) {
             return new ProjecaoMes(0, diasTotais,
                     mesAtual.receitas(), mesAtual.despesas(), mesAtual.saldo());
         }
 
-        // Calculamos o fixo pendente (recorrências que ainda não geraram transação este mês)
+        // Base da projeção: ALL transações do mês (PAGO + PENDENTE), exceto CANCELADO
+        List<ResumoContaPeriodoProjection> resumosComPendentes =
+                lancamentoRepository.resumoTodasContasComPendentes(inicioMes, fimMes);
+
+        Set<Long> idsCartao = contaRepository.findByAtivaTrue(Pageable.unpaged()).getContent()
+                .stream()
+                .filter(c -> c.getTipo() == TipoConta.CARTAO_CREDITO)
+                .map(Conta::getId)
+                .collect(Collectors.toSet());
+
+        BigDecimal receitasBase = BigDecimal.ZERO;
+        BigDecimal despesasBase = BigDecimal.ZERO;
+
+        for (ResumoContaPeriodoProjection r : resumosComPendentes) {
+            boolean isCartao = idsCartao.contains(r.getContaId());
+            if (isCartao) {
+                BigDecimal liquido = r.getTotalDebitos().subtract(r.getTotalCreditos());
+                if (liquido.compareTo(BigDecimal.ZERO) > 0) {
+                    despesasBase = despesasBase.add(liquido);
+                }
+            } else {
+                receitasBase = receitasBase.add(r.getTotalCreditos());
+                despesasBase = despesasBase.add(r.getTotalDebitos());
+            }
+        }
+
+        // Adicionar recorrências que ainda NÃO geraram transação este mês
         BigDecimal fixoPendenteReceita = BigDecimal.ZERO;
         BigDecimal fixoPendenteDespesa = BigDecimal.ZERO;
-        
+
         YearMonth referencia = YearMonth.from(hoje);
         List<TransacaoRecorrente> recorrentes = transacaoRecorrenteRepository.findByAtivaTrue();
-        
+
         for (TransacaoRecorrente rec : recorrentes) {
             boolean jaGerada = transacaoRepository.existsByRecorrenciaIdAndReferencia(rec.getId(), referencia);
             if (!jaGerada && rec.isAtivaEm(hoje)) {
@@ -197,23 +223,23 @@ public class DashboardService {
             }
         }
 
-        // Adicionamos parcelas de dívidas/empréstimos pendentes para o mês
-        List<ParcelaDivida> parcelasPendentes = parcelaDividaRepository.findByStatusInAndDataVencimentoBetween(
-                List.of(StatusTransacao.PENDENTE, StatusTransacao.ATRASADO),
-                hoje.with(TemporalAdjusters.firstDayOfMonth()), fimMes);
+        // Adicionar parcelas de dívidas/empréstimos pendentes do mês (que não têm transação gerada)
+                List<ParcelaDivida> parcelasPendentes = parcelaDividaRepository.findProximasParcelas(inicioMes, fimMes, org.springframework.data.domain.PageRequest.of(0, 100));
 
         for (ParcelaDivida p : parcelasPendentes) {
-            if (p.getDivida().getTipo() == TipoDivida.A_RECEBER) {
-                fixoPendenteReceita = fixoPendenteReceita.add(p.getValor());
-            } else if (p.getDivida().getTipo() == TipoDivida.A_PAGAR) {
-                fixoPendenteDespesa = fixoPendenteDespesa.add(p.getValor());
+            // Só adicionar se ainda não tem transação (senão já foi contada na base)
+            if (p.getTransacaoGerada() == null) {
+                if (p.getDivida().getTipo() == TipoDivida.A_RECEBER) {
+                    fixoPendenteReceita = fixoPendenteReceita.add(p.getValor());
+                } else if (p.getDivida().getTipo() == TipoDivida.A_PAGAR) {
+                    fixoPendenteDespesa = fixoPendenteDespesa.add(p.getValor());
+                }
             }
         }
 
-        // Projeção: Atual + Pendentes Fixos
-        // Para simplificar e responder ao feedback do usuário: Atual + Pendentes
-        BigDecimal recProj  = mesAtual.receitas().add(fixoPendenteReceita).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal despProj = mesAtual.despesas().add(fixoPendenteDespesa).setScale(2, RoundingMode.HALF_UP);
+        // Projeção: base (PAGO + PENDENTE já registradas) + itens que ainda vão ser gerados
+        BigDecimal recProj  = receitasBase.add(fixoPendenteReceita).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal despProj = despesasBase.add(fixoPendenteDespesa).setScale(2, RoundingMode.HALF_UP);
 
         return new ProjecaoMes(diasDecorridos, diasTotais,
                 recProj, despProj, recProj.subtract(despProj));
@@ -284,16 +310,32 @@ public class DashboardService {
     // ─────────────────────────────────────────────────────────────────────────
 
     private ProximosVencimentos buildProximosVencimentos(LocalDate hoje) {
-        List<Transacao> pendentes = transacaoRepository
-                .findProximosVencimentos(hoje, hoje.plusDays(30));
+        ZoneId zone = ZoneId.of("America/Sao_Paulo");
+        LocalDate hojeBr = LocalDate.now(zone);
+        LocalDate limite = hojeBr.plusDays(30);
 
-        List<Vencimento> todos = pendentes.stream().map(t -> {
-            String conta = t.getLancamentos() != null && !t.getLancamentos().isEmpty()
-                    ? t.getLancamentos().iterator().next().getConta().getNome() : "-";
-            int dias = (int) (t.getData().toEpochDay() - hoje.toEpochDay());
-            return new Vencimento(t.getId(), t.getDescricao(), t.getValor(),
-                    t.getData(), dias, conta);
-        }).toList();
+        // 1. Buscar do repositório de transações (limitado a 50)
+        List<Transacao> transacoes = transacaoRepository.findProximosVencimentos(hojeBr, limite, PageRequest.of(0, 50));
+
+        // 2. Buscar do repositório de parcelas de dívidas (limitado a 50)
+        List<ParcelaDivida> parcelas = parcelaDividaRepository.findProximasParcelas(hojeBr, limite, PageRequest.of(0, 50));
+
+        if (transacoes.isEmpty() && parcelas.isEmpty()) {
+            return new ProximosVencimentos(List.of(), List.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+
+        List<Vencimento> todos = new ArrayList<>();
+
+        // Mapear transações
+        transacoes.forEach(t -> todos.add(mapTransacaoToVencimento(t, hojeBr)));
+
+        // Mapear parcelas
+        parcelas.forEach(p -> todos.add(mapParcelaToVencimento(p, hojeBr)));
+
+        // 3. Ordenação multinível: Atrasados -> Hoje -> Futuro
+        todos.sort(Comparator.comparing(Vencimento::atrasado, Comparator.reverseOrder())
+                .thenComparing(Vencimento::venceHoje, Comparator.reverseOrder())
+                .thenComparing(Vencimento::dataVencimento));
 
         List<Vencimento> v7  = todos.stream().filter(v -> v.diasRestantes() <= 7).toList();
         List<Vencimento> v15 = todos.stream().filter(v -> v.diasRestantes() <= 15).toList();
@@ -302,6 +344,53 @@ public class DashboardService {
         BigDecimal t30 = todos.stream().map(Vencimento::valor).reduce(BigDecimal.ZERO, BigDecimal::add);
 
         return new ProximosVencimentos(v7, v15, todos, t7, t30);
+    }
+
+    private Vencimento mapTransacaoToVencimento(Transacao t, LocalDate hoje) {
+        String conta = t.getLancamentos() != null && !t.getLancamentos().isEmpty()
+                ? t.getLancamentos().iterator().next().getConta().getNome() : "-";
+
+        int dias = (int) java.time.temporal.ChronoUnit.DAYS.between(hoje, t.getData());
+        boolean atrasado = t.getData().isBefore(hoje);
+        boolean venceHoje = t.getData().isEqual(hoje);
+
+        return new Vencimento(
+                "TRANSACAO-" + t.getId(),
+                t.getId(),
+                null, // parcelaId
+                t.getDescricao(),
+                t.getValor(),
+                t.getData(),
+                dias,
+                conta,
+                com.gestao.financeiro.entity.enums.OrigemVencimento.TRANSACAO,
+                t.getTipo() == TipoTransacao.RECEITA ? com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA : com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
+                atrasado,
+                venceHoje
+        );
+    }
+
+    private Vencimento mapParcelaToVencimento(ParcelaDivida p, LocalDate hoje) {
+        String conta = "Dívida: " + p.getDivida().getDescricao();
+        
+        int dias = (int) java.time.temporal.ChronoUnit.DAYS.between(hoje, p.getDataVencimento());
+        boolean atrasado = p.getDataVencimento().isBefore(hoje);
+        boolean venceHoje = p.getDataVencimento().isEqual(hoje);
+
+        return new Vencimento(
+                "PARCELA-" + p.getId(),
+                null, // transacaoId
+                p.getId(),
+                p.getDivida().getDescricao() + " (" + p.getNumeroParcela() + "/" + (p.getDivida().getParcelas() != null ? p.getDivida().getParcelas().size() : "?") + ")",
+                p.getValor(),
+                p.getDataVencimento(),
+                dias,
+                conta,
+                com.gestao.financeiro.entity.enums.OrigemVencimento.PARCELA,
+                p.getDivida().getTipo() == TipoDivida.A_RECEBER ? com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA : com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
+                atrasado,
+                venceHoje
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────

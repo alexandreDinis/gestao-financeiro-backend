@@ -67,6 +67,7 @@ public class PessoaService {
     }
 
     public Pessoa findById(Long id) {
+        com.gestao.financeiro.util.ValidationUtils.validateId(id, "Pessoa");
         return pessoaRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Pessoa", id));
     }

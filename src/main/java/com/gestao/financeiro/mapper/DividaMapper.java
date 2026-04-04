@@ -42,8 +42,8 @@ public class DividaMapper {
 
         return new DividaResponse(
                 entity.getId(),
-                entity.getPessoa().getId(),
-                entity.getPessoa().getNome(),
+                entity.getPessoa() != null ? entity.getPessoa().getId() : null,
+                entity.getPessoa() != null ? entity.getPessoa().getNome() : "Não vinculada",
                 entity.getDescricao(),
                 entity.getTipo(),
                 entity.getValorTotal(),
@@ -63,8 +63,13 @@ public class DividaMapper {
     }
 
     public ParcelaDividaResponse toParcelaResponse(ParcelaDivida entity) {
+        Long dividaId = entity.getDivida() != null ? entity.getDivida().getId() : null;
+        String nomeDivida = entity.getDivida() != null ? entity.getDivida().getDescricao() : "Dívida";
+
         return new ParcelaDividaResponse(
                 entity.getId(),
+                dividaId,
+                nomeDivida,
                 entity.getNumeroParcela(),
                 entity.getValor(),
                 entity.getDataVencimento(),

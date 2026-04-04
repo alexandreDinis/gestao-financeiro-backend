@@ -39,6 +39,6 @@ public record TransacaoRequest(
         Boolean geradoAutomaticamente,
 
         Long recorrenciaId,
-
+        java.time.YearMonth referencia,
         com.gestao.financeiro.entity.enums.StatusTransacao status
 ) {}

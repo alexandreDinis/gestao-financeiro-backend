@@ -13,6 +13,7 @@ import com.gestao.financeiro.repository.CategoriaRepository;
 import com.gestao.financeiro.repository.ContaRepository;
 import com.gestao.financeiro.repository.TransacaoRecorrenteRepository;
 import com.gestao.financeiro.repository.TransacaoRepository;
+import com.gestao.financeiro.entity.enums.StatusTransacao;
 import java.time.YearMonth;
 import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
@@ -142,7 +143,9 @@ public class TransacaoRecorrenteService {
             
             // Lógica de "Catch-up": Se não foi gerada para este mês e já passou (ou é) o dia, gera.
             YearMonth referencia = YearMonth.from(hoje);
-            boolean jaGerada = transacaoRepository.existsByRecorrenciaIdAndReferencia(rec.getId(), referencia);
+            // IMPORTANTE: Usamos a query que ignora soft-delete para não recriar algo que o usuário deletou
+            String refStr = referencia.atDay(1).toString(); 
+            boolean jaGerada = transacaoRepository.existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(rec.getId(), refStr);
             
             if (!jaGerada && deveGerarParaReferencia(rec, hoje)) {
                 try {
@@ -188,6 +191,7 @@ public class TransacaoRecorrenteService {
                 null, // idempotencyKey
                 true, // geradoAutomaticamente
                 rec.getId(), // recorrenciaId
+                YearMonth.from(hoje), // referencia
                 null // status
         );
 

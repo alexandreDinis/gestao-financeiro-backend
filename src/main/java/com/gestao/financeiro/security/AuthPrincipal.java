@@ -3,8 +3,6 @@ package com.gestao.financeiro.security;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import java.util.Collection;
-
 /**
  * Principal customizado contendo dados do usuário autenticado no JWT.
  * Usado pelo TenantFilter para extrair o tenantId de forma segura.

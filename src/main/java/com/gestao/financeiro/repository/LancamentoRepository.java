@@ -75,6 +75,27 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
             @Param("fim") LocalDate fim);
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Resumo incluindo transações PENDENTES — usado para projeção do mês
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Query("""
+        SELECT
+            l.conta.id                                          AS contaId,
+            CAST(l.conta.tipo AS string)                        AS tipoConta,
+            COALESCE(SUM(CASE WHEN l.direcao = 'CREDITO' THEN l.valor ELSE 0 END), 0) AS totalCreditos,
+            COALESCE(SUM(CASE WHEN l.direcao = 'DEBITO'  THEN l.valor ELSE 0 END), 0) AS totalDebitos
+        FROM Lancamento l
+        JOIN l.transacao t
+        WHERE t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL
+          AND t.status <> 'CANCELADO'
+        GROUP BY l.conta.id, l.conta.tipo
+    """)
+    List<ResumoContaPeriodoProjection> resumoTodasContasComPendentes(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Totais globais (para fluxo de caixa e comparativo)
     // ─────────────────────────────────────────────────────────────────────────
 

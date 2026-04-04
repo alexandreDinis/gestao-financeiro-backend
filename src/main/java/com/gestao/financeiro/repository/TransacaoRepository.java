@@ -22,6 +22,9 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
     Optional<Transacao> findByIdempotencyKey(String idempotencyKey);
 
     boolean existsByRecorrenciaIdAndReferencia(Long recorrenciaId, YearMonth referencia);
+    
+    @Query(value = "SELECT COUNT(*) > 0 FROM transacao WHERE recorrencia_id = :recorrenciaId AND referencia = :referencia", nativeQuery = true)
+    boolean existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(@Param("recorrenciaId") Long recorrenciaId, @Param("referencia") String referencia);
 
     @Query("""
         SELECT t FROM Transacao t
@@ -83,5 +86,6 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
     """)
     List<Transacao> findProximosVencimentos(
             @Param("hoje") LocalDate hoje,
-            @Param("dataLimite") LocalDate dataLimite);
+            @Param("dataLimite") LocalDate dataLimite,
+            org.springframework.data.domain.Pageable pageable);
 }

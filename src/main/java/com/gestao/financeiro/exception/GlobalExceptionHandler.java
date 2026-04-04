@@ -29,6 +29,14 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error("RESOURCE_NOT_FOUND", ex.getMessage()));
     }
 
+    @ExceptionHandler(InvalidIdException.class)
+    public ResponseEntity<ApiResponse<Void>> handleInvalidId(InvalidIdException ex) {
+        log.warn("Requisição com ID inválido interceptada: {}", ex.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("INVALID_ID", ex.getMessage()));
+    }
+
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusiness(BusinessException ex) {
         log.warn("Regra de negócio violada: {}", ex.getMessage());

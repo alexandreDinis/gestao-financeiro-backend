@@ -124,6 +124,7 @@ public class TransacaoService {
                 .idempotencyKey(request.idempotencyKey())
                 .geradoAutomaticamente(request.geradoAutomaticamente() != null && request.geradoAutomaticamente())
                 .recorrenciaId(request.recorrenciaId())
+                .referencia(request.referencia())
                 .categoria(categoria)
                 .build();
         transacao.setTenantId(tenantId);
@@ -302,8 +303,8 @@ public class TransacaoService {
     }
 
     private Transacao findById(Long id) {
-        Long safeId = Objects.requireNonNull(id, "ID da transação não pode ser nulo");
-        return transacaoRepository.findById(safeId)
-                .orElseThrow(() -> new ResourceNotFoundException("Transação", safeId));
+        com.gestao.financeiro.util.ValidationUtils.validateId(id, "Transação");
+        return transacaoRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Transação", id));
     }
 }

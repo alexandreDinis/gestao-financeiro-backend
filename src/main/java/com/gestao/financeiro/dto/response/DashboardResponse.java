@@ -86,13 +86,25 @@ public record DashboardResponse(
             BigDecimal totalVencer30Dias
     ) {}
 
+    /**
+     * DTO de representação unificada de um compromisso financeiro (Transação ou Parcela de Dívida).
+     * 
+     * @param idUnico Identificador composto (ex: "TRANSACAO-123") para indexação única no Frontend.
+     * @param diasRestantes Diferença em dias: 0 = hoje, < 0 = atrasado, > 0 = futuro.
+     */
     public record Vencimento(
+            String idUnico,
             Long transacaoId,
+            Long parcelaId,
             String descricao,
             BigDecimal valor,
             LocalDate dataVencimento,
             int diasRestantes,
-            String conta
+            String conta,
+            com.gestao.financeiro.entity.enums.OrigemVencimento origem,
+            com.gestao.financeiro.entity.enums.TipoMovimentacao tipo,
+            boolean atrasado,
+            boolean venceHoje
     ) {}
 
     public record ResumoMeta(
