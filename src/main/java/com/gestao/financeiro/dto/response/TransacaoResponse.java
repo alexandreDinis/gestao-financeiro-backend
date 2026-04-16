@@ -20,7 +20,7 @@ public record TransacaoResponse(
         StatusTransacao status,
         String observacao,
         CategoriaResponse categoria,
-        List<LancamentoResponse> lancamentos,
+        List<LancamentoLegResponse> lancamentos,
         Boolean geradoAutomaticamente,
         Long recorrenciaId,
         LocalDateTime createdAt

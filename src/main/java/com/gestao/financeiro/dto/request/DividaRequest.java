@@ -10,7 +10,6 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 public record DividaRequest(
-        @NotNull(message = "Pessoa é obrigatória")
         Long pessoaId,
 
         @NotBlank(message = "Descrição é obrigatória")

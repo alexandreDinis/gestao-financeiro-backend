@@ -50,11 +50,15 @@ public class ApiResponse<T> {
     }
 
     public static <T> ApiResponse<T> error(String code, String message) {
-        return error(List.of(new ApiError(code, message, null)));
+        return error(List.of(new ApiError(code, message, null, null)));
     }
 
     public static <T> ApiResponse<T> error(String code, String message, String field) {
-        return error(List.of(new ApiError(code, message, field)));
+        return error(List.of(new ApiError(code, message, field, null)));
+    }
+
+    public static <T> ApiResponse<T> error(String code, String message, java.util.Map<String, Object> details) {
+        return error(List.of(new ApiError(code, message, null, details)));
     }
 
     @Getter
@@ -82,11 +86,13 @@ public class ApiResponse<T> {
         private final String code;
         private final String message;
         private final String field;
+        private final java.util.Map<String, Object> details;
 
-        public ApiError(String code, String message, String field) {
+        public ApiError(String code, String message, String field, java.util.Map<String, Object> details) {
             this.code = code;
             this.message = message;
             this.field = field;
+            this.details = details;
         }
     }
 }

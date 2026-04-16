@@ -2,6 +2,7 @@ package com.gestao.financeiro.controller;
 
 import com.gestao.financeiro.dto.request.CartaoCreditoRequest;
 import com.gestao.financeiro.dto.request.CompraCartaoRequest;
+import com.gestao.financeiro.dto.request.PagarFaturaRequest;
 import com.gestao.financeiro.dto.response.ApiResponse;
 import com.gestao.financeiro.dto.response.CartaoCreditoResponse;
 import com.gestao.financeiro.dto.response.FaturaCartaoResponse;
@@ -71,7 +72,9 @@ public class CartaoCreditoController {
     }
 
     @PutMapping("/faturas/{faturaId}/pagar")
-    public ApiResponse<FaturaCartaoResponse> pagarFatura(@PathVariable Long faturaId) {
-        return ApiResponse.ok(cartaoService.pagarFatura(faturaId));
+    public ApiResponse<FaturaCartaoResponse> pagarFatura(
+            @PathVariable Long faturaId,
+            @Valid @RequestBody PagarFaturaRequest request) {
+        return ApiResponse.ok(cartaoService.pagarFatura(faturaId, request));
     }
 }

@@ -2,6 +2,7 @@ package com.gestao.financeiro.controller;
 
 import com.gestao.financeiro.dto.request.TransacaoRequest;
 import com.gestao.financeiro.dto.response.ApiResponse;
+import com.gestao.financeiro.dto.response.LancamentoResponse;
 import com.gestao.financeiro.dto.response.TransacaoResponse;
 import com.gestao.financeiro.entity.enums.StatusTransacao;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
@@ -9,6 +10,7 @@ import com.gestao.financeiro.entity.enums.TipoDespesa;
 import com.gestao.financeiro.service.TransacaoService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -25,7 +27,7 @@ public class TransacaoController {
     private final TransacaoService transacaoService;
 
     @GetMapping
-    public ApiResponse<List<TransacaoResponse>> listar(
+    public ApiResponse<List<LancamentoResponse>> listar(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dataInicio,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dataFim,
             @RequestParam(required = false) Long categoriaId,

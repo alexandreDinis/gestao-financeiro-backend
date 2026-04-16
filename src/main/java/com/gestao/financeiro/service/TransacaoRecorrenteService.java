@@ -13,8 +13,10 @@ import com.gestao.financeiro.repository.CategoriaRepository;
 import com.gestao.financeiro.repository.ContaRepository;
 import com.gestao.financeiro.repository.TransacaoRecorrenteRepository;
 import com.gestao.financeiro.repository.TransacaoRepository;
+import com.gestao.financeiro.entity.enums.StatusTransacao;
 import java.time.YearMonth;
 import com.gestao.financeiro.config.TenantContext;
+import com.gestao.financeiro.provider.DateProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -39,6 +41,7 @@ public class TransacaoRecorrenteService {
     private final TransacaoRecorrenteMapper recorrenteMapper;
     private final TransacaoService transacaoService;
     private final TransacaoRepository transacaoRepository;
+    private final DateProvider dateProvider;
 
 
 
@@ -74,12 +77,12 @@ public class TransacaoRecorrenteService {
         recorrente.setConta(conta);
         recorrente.setCategoria(categoria);
 
-        recorrente = recorrenteRepository.save(recorrente);
+        recorrente = recorrenteRepository.saveAndFlush(recorrente);
         log.info("[tenant={}] Recorrência criada: id={} desc={} periodicidade={}",
                 tenantId, recorrente.getId(), recorrente.getDescricao(), recorrente.getPeriodicidade());
 
         // Geração imediata da primeira transação se a data de início for hoje
-        LocalDate hoje = LocalDate.now();
+        LocalDate hoje = dateProvider.now();
         if (recorrente.isAtivaEm(hoje) && deveGerarHoje(recorrente, hoje)) {
             try {
                 log.info("[tenant={}] Gerando primeira transação da recorrência id={}", tenantId, recorrente.getId());
@@ -132,7 +135,7 @@ public class TransacaoRecorrenteService {
     @Transactional
     public void processarRecorrencias() {
         log.info("Iniciando processamento de recorrências...");
-        LocalDate hoje = LocalDate.now();
+        LocalDate hoje = dateProvider.now();
 
         List<TransacaoRecorrente> ativas = recorrenteRepository.findByAtivaTrue();
         int geradas = 0;
@@ -142,7 +145,7 @@ public class TransacaoRecorrenteService {
             
             // Lógica de "Catch-up": Se não foi gerada para este mês e já passou (ou é) o dia, gera.
             YearMonth referencia = YearMonth.from(hoje);
-            boolean jaGerada = transacaoRepository.existsByRecorrenciaIdAndReferencia(rec.getId(), referencia);
+            boolean jaGerada = transacaoRepository.existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(rec.getId(), referencia);
             
             if (!jaGerada && deveGerarParaReferencia(rec, hoje)) {
                 try {
@@ -188,6 +191,7 @@ public class TransacaoRecorrenteService {
                 null, // idempotencyKey
                 true, // geradoAutomaticamente
                 rec.getId(), // recorrenciaId
+                YearMonth.from(hoje), // referencia
                 null // status
         );
 

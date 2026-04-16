@@ -118,6 +118,7 @@ public class CategoriaService {
     }
 
     private Categoria findById(Long id) {
+        com.gestao.financeiro.util.ValidationUtils.validateId(id, "Categoria");
         return categoriaRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Categoria", id));
     }

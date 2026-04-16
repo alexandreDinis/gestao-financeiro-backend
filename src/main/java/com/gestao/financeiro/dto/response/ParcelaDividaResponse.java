@@ -7,6 +7,8 @@ import java.time.LocalDate;
 
 public record ParcelaDividaResponse(
         Long id,
+        Long dividaId,
+        String nomeDivida,
         Integer numeroParcela,
         BigDecimal valor,
         LocalDate dataVencimento,
