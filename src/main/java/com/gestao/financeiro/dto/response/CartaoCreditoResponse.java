@@ -8,8 +8,14 @@ public record CartaoCreditoResponse(
         Long contaId,
         String contaNome,
         String bandeira,
-        BigDecimal limite,
-        Integer diaFechamento,
-        Integer diaVencimento,
-        LocalDateTime createdAt
+        BigDecimal limiteTotal,
+        BigDecimal utilizado,
+        BigDecimal disponivel,
+        BigDecimal valorFaturaAberta,
+        BigDecimal valorFaturasFechadas,
+        BigDecimal valorTotalDevido,
+        Integer melhorDiaCompra,
+        Integer diasParaFechar,
+        java.time.LocalDate dataVencimentoFaturaAtual,
+        java.time.LocalDateTime createdAt
 ) {}

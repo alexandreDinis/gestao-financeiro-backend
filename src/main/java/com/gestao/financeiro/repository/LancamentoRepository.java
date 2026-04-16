@@ -125,6 +125,23 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
             @Param("fim") LocalDate fim);
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Débitos SEM cartão de crédito (para usar com parcela-based CC expenses)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Query("""
+        SELECT COALESCE(SUM(l.valor), 0)
+        FROM Lancamento l JOIN l.transacao t
+        WHERE l.direcao = 'DEBITO'
+          AND l.conta.tipo <> 'CARTAO_CREDITO'
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND t.status = 'PAGO'
+    """)
+    BigDecimal somarTotalDebitosPeriodoSemCartao(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    // ─────────────────────────────────────────────────────────────────────────
     // ✅ FIX Problema 2 — projection tipada (antes retornava Object[])
     //    Traz gastos de TODAS as categorias de uma vez; orçamentos montam em memória.
     // ─────────────────────────────────────────────────────────────────────────

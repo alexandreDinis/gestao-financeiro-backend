@@ -81,6 +81,10 @@ public class Transacao extends TenantEntity {
     @Column(name = "recorrencia_id")
     private Long recorrenciaId;
 
+    @Column(name = "numero_parcelas")
+    @Builder.Default
+    private Integer numeroParcelas = 1;
+
     @Column(name = "criado_em", updatable = false)
     private LocalDateTime criadoEm;
 

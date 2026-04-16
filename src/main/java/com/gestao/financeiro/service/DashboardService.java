@@ -49,6 +49,7 @@ public class DashboardService {
     private final TransacaoRecorrenteRepository transacaoRecorrenteRepository;
     private final TransacaoRecorrenteService transacaoRecorrenteService;
     private final ParcelaDividaRepository parcelaDividaRepository;
+    private final ParcelaRepository parcelaRepository;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Ponto de entrada
@@ -135,15 +136,16 @@ public class DashboardService {
         for (ResumoContaPeriodoProjection r : resumos) {
             boolean isCartao = idsCartao.contains(r.getContaId());
             if (isCartao) {
-                BigDecimal liquido = r.getTotalDebitos().subtract(r.getTotalCreditos());
-                if (liquido.compareTo(BigDecimal.ZERO) > 0) {
-                    despesas = despesas.add(liquido);
-                }
+                // SKIP — cartão de crédito usa Parcela como fonte de verdade
             } else {
                 receitas = receitas.add(r.getTotalCreditos());
                 despesas = despesas.add(r.getTotalDebitos());
             }
         }
+
+        // Cartão: somar parcelas com vencimento no período (impacto real mensal)
+        BigDecimal despesasCartao = parcelaRepository.somarParcelasPorPeriodo(inicio, fim);
+        despesas = despesas.add(despesasCartao);
 
         return new ResumoMes(receitas, despesas, receitas.subtract(despesas));
     }
@@ -157,7 +159,9 @@ public class DashboardService {
         LocalDate fimAnt    = hoje.minusMonths(1).with(TemporalAdjusters.lastDayOfMonth());
 
         BigDecimal recAnt  = lancamentoRepository.somarTotalCreditosPeriodo(inicioAnt, fimAnt);
-        BigDecimal despAnt = lancamentoRepository.somarTotalDebitosPeriodo(inicioAnt, fimAnt);
+        // Débitos sem cartão + parcelas do período (impacto real)
+        BigDecimal despAnt = lancamentoRepository.somarTotalDebitosPeriodoSemCartao(inicioAnt, fimAnt)
+                .add(parcelaRepository.somarParcelasPorPeriodo(inicioAnt, fimAnt));
 
         return new ComparativoMes(
                 mesAtual.receitas(), recAnt,  variacaoPct(recAnt,  mesAtual.receitas()),
@@ -195,15 +199,16 @@ public class DashboardService {
         for (ResumoContaPeriodoProjection r : resumosComPendentes) {
             boolean isCartao = idsCartao.contains(r.getContaId());
             if (isCartao) {
-                BigDecimal liquido = r.getTotalDebitos().subtract(r.getTotalCreditos());
-                if (liquido.compareTo(BigDecimal.ZERO) > 0) {
-                    despesasBase = despesasBase.add(liquido);
-                }
+                // SKIP — cartão de crédito usa Parcela como fonte de verdade
             } else {
                 receitasBase = receitasBase.add(r.getTotalCreditos());
                 despesasBase = despesasBase.add(r.getTotalDebitos());
             }
         }
+
+        // Cartão: somar parcelas com vencimento no período (impacto real mensal)
+        BigDecimal despesasCartaoProj = parcelaRepository.somarParcelasPorPeriodo(inicioMes, fimMes);
+        despesasBase = despesasBase.add(despesasCartaoProj);
 
         // Adicionar recorrências que ainda NÃO geraram transação este mês
         BigDecimal fixoPendenteReceita = BigDecimal.ZERO;
@@ -278,7 +283,9 @@ public class DashboardService {
             LocalDate fim    = ref.with(TemporalAdjusters.lastDayOfMonth());
 
             BigDecimal rec  = lancamentoRepository.somarTotalCreditosPeriodo(inicio, fim);
-            BigDecimal desp = lancamentoRepository.somarTotalDebitosPeriodo(inicio, fim);
+            // Débitos sem cartão + parcelas do período (impacto real)
+            BigDecimal desp = lancamentoRepository.somarTotalDebitosPeriodoSemCartao(inicio, fim)
+                    .add(parcelaRepository.somarParcelasPorPeriodo(inicio, fim));
             String label = capitalize(Month.of(ref.getMonthValue())
                     .getDisplayName(TextStyle.SHORT, Locale.forLanguageTag("pt-BR")));
 
@@ -317,10 +324,13 @@ public class DashboardService {
         // 1. Buscar do repositório de transações (limitado a 50)
         List<Transacao> transacoes = transacaoRepository.findProximosVencimentos(hojeBr, limite, PageRequest.of(0, 50));
 
-        // 2. Buscar do repositório de parcelas de dívidas (limitado a 50)
-        List<ParcelaDivida> parcelas = parcelaDividaRepository.findProximasParcelas(hojeBr, limite, PageRequest.of(0, 50));
+        // 2. Buscar do repositório de parcelas de cartão (NEW - Impact Based)
+        List<Parcela> parcelasCartao = parcelaRepository.findProximasParcelas(hojeBr, limite, PageRequest.of(0, 50));
 
-        if (transacoes.isEmpty() && parcelas.isEmpty()) {
+        // 3. Buscar do repositório de parcelas de dívidas (limitado a 50)
+        List<ParcelaDivida> parcelasDivida = parcelaDividaRepository.findProximasParcelas(hojeBr, limite, PageRequest.of(0, 50));
+
+        if (transacoes.isEmpty() && parcelasCartao.isEmpty() && parcelasDivida.isEmpty()) {
             return new ProximosVencimentos(List.of(), List.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
@@ -329,8 +339,11 @@ public class DashboardService {
         // Mapear transações
         transacoes.forEach(t -> todos.add(mapTransacaoToVencimento(t, hojeBr)));
 
-        // Mapear parcelas
-        parcelas.forEach(p -> todos.add(mapParcelaToVencimento(p, hojeBr)));
+        // Mapear parcelas de cartão
+        parcelasCartao.forEach(p -> todos.add(mapParcelaCartaoToVencimento(p, hojeBr)));
+
+        // Mapear parcelas de dívida
+        parcelasDivida.forEach(p -> todos.add(mapParcelaDividaToVencimento(p, hojeBr)));
 
         // 3. Ordenação multinível: Atrasados -> Hoje -> Futuro
         todos.sort(Comparator.comparing(Vencimento::atrasado, Comparator.reverseOrder())
@@ -370,7 +383,32 @@ public class DashboardService {
         );
     }
 
-    private Vencimento mapParcelaToVencimento(ParcelaDivida p, LocalDate hoje) {
+    private Vencimento mapParcelaCartaoToVencimento(Parcela p, LocalDate hoje) {
+        Transacao t = p.getTransacao();
+        String conta = t.getLancamentos() != null && !t.getLancamentos().isEmpty()
+                ? t.getLancamentos().iterator().next().getConta().getNome() : "Cartão de Crédito";
+        
+        int dias = (int) java.time.temporal.ChronoUnit.DAYS.between(hoje, p.getDataVencimento());
+        boolean atrasado = p.getDataVencimento().isBefore(hoje);
+        boolean venceHoje = p.getDataVencimento().isEqual(hoje);
+
+        return new Vencimento(
+                "PARCELA-CARTAO-" + p.getId(),
+                t.getId(),
+                p.getId(),
+                t.getDescricao() + " (" + p.getNumeroParcela() + "/" + p.getTotalParcelas() + ")",
+                p.getValorParcela(),
+                p.getDataVencimento(),
+                dias,
+                conta,
+                com.gestao.financeiro.entity.enums.OrigemVencimento.PARCELA,
+                com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
+                atrasado,
+                venceHoje
+        );
+    }
+
+    private Vencimento mapParcelaDividaToVencimento(ParcelaDivida p, LocalDate hoje) {
         String conta = "Dívida: " + p.getDivida().getDescricao();
         
         int dias = (int) java.time.temporal.ChronoUnit.DAYS.between(hoje, p.getDataVencimento());
@@ -378,7 +416,7 @@ public class DashboardService {
         boolean venceHoje = p.getDataVencimento().isEqual(hoje);
 
         return new Vencimento(
-                "PARCELA-" + p.getId(),
+                "PARCELA-DIVIDA-" + p.getId(),
                 null, // transacaoId
                 p.getId(),
                 p.getDivida().getDescricao() + " (" + p.getNumeroParcela() + "/" + (p.getDivida().getParcelas() != null ? p.getDivida().getParcelas().size() : "?") + ")",
@@ -450,14 +488,27 @@ public class DashboardService {
                         .stream().map(cartao -> {
                             BigDecimal limite = nvl(cartao.getLimite());
 
-                            BigDecimal faturaAtual = faturaCartaoRepository
+                            // Professional logic: sum all invoices not PAGA (ABERTA, FECHADA, ATRASADA)
+                            List<com.gestao.financeiro.entity.enums.StatusFatura> statusParaSomar = List.of(
+                                com.gestao.financeiro.entity.enums.StatusFatura.ABERTA,
+                                com.gestao.financeiro.entity.enums.StatusFatura.FECHADA,
+                                com.gestao.financeiro.entity.enums.StatusFatura.ATRASADA
+                            );
+                            
+                            List<FaturaCartao> faturasPendentes = faturaCartaoRepository.findByCartaoIdAndStatusIn(cartao.getId(), statusParaSomar);
+                            
+                            BigDecimal faturaTotalPendente = faturasPendentes.stream()
+                                    .map(f -> nvl(f.getValorTotal()))
+                                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                            BigDecimal faturaMesAtual = faturaCartaoRepository
                                     .findByCartaoIdAndMesReferenciaAndAnoReferencia(
                                             cartao.getId(), hoje.getMonthValue(), hoje.getYear())
                                     .map(f -> nvl(f.getValorTotal()))
                                     .orElse(BigDecimal.ZERO);
 
-                            BigDecimal utilizado = faturaAtual.compareTo(BigDecimal.ZERO) > 0
-                                    ? faturaAtual
+                            BigDecimal utilizado = faturaTotalPendente.compareTo(BigDecimal.ZERO) > 0
+                                    ? faturaTotalPendente
                                     : calcularSaldoConta(conta).negate().max(BigDecimal.ZERO);
 
                             BigDecimal disponivel = limite.subtract(utilizado).max(BigDecimal.ZERO);
@@ -472,7 +523,7 @@ public class DashboardService {
                             return new ResumoCartao(
                                     cartao.getId(), conta.getNome(),
                                     limite, utilizado, disponivel, round2(pct),
-                                    faturaAtual, proximoVencimento
+                                    faturaMesAtual, proximoVencimento
                             );
                         }))
                 .toList();

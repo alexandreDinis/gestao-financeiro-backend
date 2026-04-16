@@ -21,19 +21,21 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
 
     Optional<Transacao> findByIdempotencyKey(String idempotencyKey);
 
+    List<Transacao> findByRecorrenciaId(Long recorrenciaId);
+
     boolean existsByRecorrenciaIdAndReferencia(Long recorrenciaId, YearMonth referencia);
     
-    @Query(value = "SELECT COUNT(*) > 0 FROM transacao WHERE recorrencia_id = :recorrenciaId AND referencia = :referencia", nativeQuery = true)
-    boolean existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(@Param("recorrenciaId") Long recorrenciaId, @Param("referencia") String referencia);
+    @Query("SELECT COUNT(t) > 0 FROM Transacao t WHERE t.recorrenciaId = :recorrenciaId AND t.referencia = :referencia")
+    boolean existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(@Param("recorrenciaId") Long recorrenciaId, @Param("referencia") YearMonth referencia);
 
     @Query("""
         SELECT t FROM Transacao t
         LEFT JOIN FETCH t.categoria
         LEFT JOIN FETCH t.usuario
-        WHERE (:dataInicio IS NULL OR t.data >= :dataInicio)
-          AND (:dataFim IS NULL OR t.data <= :dataFim)
-          AND (:categoriaId IS NULL OR t.categoria.id = :categoriaId)
-          AND (:contaId IS NULL OR EXISTS (
+        WHERE (CAST(:dataInicio AS LocalDate) IS NULL OR t.data >= :dataInicio)
+          AND (CAST(:dataFim AS LocalDate) IS NULL OR t.data <= :dataFim)
+          AND (CAST(:categoriaId AS long) IS NULL OR t.categoria.id = :categoriaId)
+          AND (CAST(:contaId AS long) IS NULL OR EXISTS (
                 SELECT l FROM Lancamento l WHERE l.transacao = t AND l.conta.id = :contaId
           ))
           AND (:tipo IS NULL OR t.tipo = :tipo)
@@ -41,6 +43,7 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
           AND (:status IS NULL OR t.status = :status)
           AND (:geradoAutomaticamente IS NULL OR t.geradoAutomaticamente = :geradoAutomaticamente)
           AND (:busca IS NULL OR LOWER(CAST(t.descricao AS string)) LIKE LOWER(CONCAT('%', CAST(:busca AS string), '%')))
+          AND (t.numeroParcelas IS NULL OR t.numeroParcelas <= 1)
           AND t.deletedAt IS NULL
     """)
     Page<Transacao> buscarComFiltros(
@@ -82,6 +85,7 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
         WHERE t.status = 'PENDENTE'
           AND t.data BETWEEN :hoje AND :dataLimite
           AND t.deletedAt IS NULL
+          AND (t.numeroParcelas IS NULL OR t.numeroParcelas <= 1)
         ORDER BY t.data ASC
     """)
     List<Transacao> findProximosVencimentos(

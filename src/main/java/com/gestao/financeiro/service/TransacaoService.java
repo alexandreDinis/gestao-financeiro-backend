@@ -1,6 +1,7 @@
 package com.gestao.financeiro.service;
 
 import com.gestao.financeiro.dto.request.TransacaoRequest;
+import com.gestao.financeiro.dto.response.LancamentoResponse;
 import com.gestao.financeiro.dto.response.TransacaoResponse;
 import com.gestao.financeiro.entity.*;
 import com.gestao.financeiro.entity.enums.DirecaoLancamento;
@@ -18,12 +19,19 @@ import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
@@ -40,7 +48,7 @@ public class TransacaoService {
 
 
 
-    public Page<TransacaoResponse> listar(
+    public Page<LancamentoResponse> listar(
             LocalDate dataInicio, LocalDate dataFim,
             Long categoriaId, Long contaId,
             TipoTransacao tipo, TipoDespesa tipoDespesa,
@@ -48,9 +56,66 @@ public class TransacaoService {
             String busca,
             Pageable pageable) {
 
-        return transacaoRepository.buscarComFiltros(
+        Long tenantId = TenantContext.getTenantId();
+
+        // 1. Fetch Standard Transactions (numeroParcelas <= 1)
+        Page<Transacao> transacoesPage = transacaoRepository.buscarComFiltros(
                 dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, busca, pageable
-        ).map(transacaoMapper::toResponse);
+        );
+
+        // 2. Fetch Installments for the period (Impact-based)
+        // Parcelas are filtered by dataVencimento so each installment appears in its due month.
+        // May: teste (1/8), June: teste (2/8), July: teste (3/8) ...
+        List<Parcela> parcelas = new ArrayList<>();
+        if (tipo == null || tipo == TipoTransacao.DESPESA) {
+             // Use more reasonable date boundaries for PostgreSQL
+             LocalDate filterInicio = dataInicio != null ? dataInicio : LocalDate.of(1900, 1, 1);
+             LocalDate filterFim = dataFim != null ? dataFim : LocalDate.of(2100, 12, 31);
+             
+             parcelas = parcelaRepository.findByTenantIdAndDataVencimentoBetween(
+                tenantId, 
+                filterInicio, 
+                filterFim
+            );
+        }
+
+        // 3. Map to Ledger Response
+        Stream<LancamentoResponse> standardStream = transacoesPage.getContent().stream()
+                .map(transacaoMapper::toLedgerResponse);
+
+        Stream<LancamentoResponse> installmentStream = parcelas.stream()
+                .filter(p -> {
+                    // Apply filters manually to installments if they were fetched avulsos
+                    if (p.getTransacao() == null) return false;
+                    
+                    if (categoriaId != null) {
+                        if (p.getTransacao().getCategoria() == null) return false;
+                        if (!categoriaId.equals(p.getTransacao().getCategoria().getId())) return false;
+                    }
+                    
+                    if (busca != null) {
+                        String desc = p.getTransacao().getDescricao();
+                        if (desc == null || !desc.toLowerCase().contains(busca.toLowerCase())) return false;
+                    }
+                    return true;
+                })
+                .map(transacaoMapper::toLedgerResponse);
+
+        // 4. Merge, Sort by dataReferencia (Impact Date) and Paginate in memory
+        List<LancamentoResponse> combined = Stream.concat(standardStream, installmentStream)
+                .sorted(Comparator.comparing(LancamentoResponse::dataReferencia))
+                .toList();
+        
+        // Proper in-memory pagination logic
+        int start = (int) pageable.getOffset();
+        int end = Math.min((start + pageable.getPageSize()), combined.size());
+        
+        List<LancamentoResponse> paginatedList = new ArrayList<>();
+        if (start < combined.size()) {
+            paginatedList = combined.subList(start, end);
+        }
+
+        return new PageImpl<>(paginatedList, pageable, transacoesPage.getTotalElements() + parcelas.size());
     }
 
     public TransacaoResponse buscarPorId(Long id) {
@@ -131,7 +196,7 @@ public class TransacaoService {
 
         // Salva a transação inicialmente para garantir que tenha um ID 
         // caso precise ser referenciada por outras entidades (ex: Parcelas de Cartão)
-        transacao = transacaoRepository.save(transacao);
+        transacao = transacaoRepository.saveAndFlush(transacao);
 
         // Gera lançamentos contábeis
         if (contaOrigem.getTipo() == com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO 

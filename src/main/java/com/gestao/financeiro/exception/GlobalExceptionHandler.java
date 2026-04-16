@@ -45,13 +45,27 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error("BUSINESS_RULE_VIOLATION", ex.getMessage()));
     }
 
+    @ExceptionHandler(SaldoInsuficienteException.class)
+    public ResponseEntity<ApiResponse<Void>> handleSaldoInsuficiente(SaldoInsuficienteException ex) {
+        log.warn("Tentativa de operação com saldo insuficiente: {}", ex.getMessage());
+        java.util.Map<String, Object> details = java.util.Map.of(
+            "saldoAtual", ex.getSaldoAtual(),
+            "valorOperacao", ex.getValorOperacao(),
+            "nomeConta", ex.getNomeConta()
+        );
+        return ResponseEntity
+                .status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(ApiResponse.error("INSUFFICIENT_BALANCE", ex.getMessage(), details));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException ex) {
         List<ApiError> errors = ex.getBindingResult().getFieldErrors().stream()
                 .map(error -> new ApiError(
                         "VALIDATION_ERROR",
                         error.getDefaultMessage(),
-                        error.getField()
+                        error.getField(),
+                        null
                 ))
                 .collect(Collectors.toList());
 

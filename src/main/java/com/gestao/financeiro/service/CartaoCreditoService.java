@@ -1,6 +1,7 @@
 package com.gestao.financeiro.service;
 
 import com.gestao.financeiro.dto.request.CartaoCreditoRequest;
+import com.gestao.financeiro.dto.request.PagarFaturaRequest;
 import com.gestao.financeiro.dto.request.CompraCartaoRequest;
 import com.gestao.financeiro.dto.response.CartaoCreditoResponse;
 import com.gestao.financeiro.dto.response.FaturaCartaoResponse;
@@ -9,11 +10,15 @@ import com.gestao.financeiro.entity.*;
 import com.gestao.financeiro.entity.enums.*;
 import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
+import com.gestao.financeiro.exception.SaldoInsuficienteException;
 import com.gestao.financeiro.repository.*;
+import com.gestao.financeiro.repository.projection.CartaoCreditoResumoProjection;
 import com.gestao.financeiro.config.TenantContext;
-import lombok.RequiredArgsConstructor;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.PessimisticLockException;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -22,10 +27,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -37,7 +47,9 @@ public class CartaoCreditoService {
     private final ContaRepository contaRepository;
     private final CategoriaRepository categoriaRepository;
     private final FaturaCartaoRepository faturaRepository;
+    private final ParcelaRepository parcelaRepository;
     private final TransacaoRepository transacaoRepository;
+    private final IdempotencyControlRepository idempotencyRepository;
     private final com.gestao.financeiro.provider.DateProvider dateProvider;
 
 
@@ -142,6 +154,7 @@ public class CartaoCreditoService {
                 .tipo(TipoTransacao.DESPESA)
                 .status(StatusTransacao.PENDENTE)
                 .categoria(categoria)
+                .numeroParcelas(request.parcelas())
                 .observacao(request.parcelas() + "x no cartão " + cartao.getBandeira())
                 .build();
         transacao.setTenantId(tenantId);
@@ -163,15 +176,19 @@ public class CartaoCreditoService {
         FaturaCartao primeiraFatura = null;
 
         for (int i = 0; i < request.parcelas(); i++) {
-            // Calcula em qual fatura cai essa parcela
-            LocalDate dataRef = calcularDataFatura(dataCompra, cartao.getDiaFechamento(), i);
-            int mesFatura = dataRef.getMonthValue();
-            int anoFatura = dataRef.getYear();
+            // Calcula o vencimento em que essa parcela cai (recalculando ciclo base e aplicando shift da parcela)
+            LocalDate dataVencimentoBase = calcularDataVencimentoFatura(dataCompra, cartao.getDiaFechamento(), cartao.getDiaVencimento());
+            LocalDate dataVencimentoParcela = dataVencimentoBase.plusMonths(i);
+            
+            // Garante dia válido no mês (ex: 31 em fevereiro)
+            dataVencimentoParcela = dataVencimentoParcela.withDayOfMonth(
+                    Math.min(cartao.getDiaVencimento(), dataVencimentoParcela.lengthOfMonth()));
 
-            // Busca ou cria a fatura
-            FaturaCartao fatura = faturaRepository
-                    .findByCartaoIdAndMesReferenciaAndAnoReferencia(cartao.getId(), mesFatura, anoFatura)
-                    .orElseGet(() -> criarFatura(cartao, mesFatura, anoFatura));
+            int mesFatura = dataVencimentoParcela.getMonthValue();
+            int anoFatura = dataVencimentoParcela.getYear();
+
+            // Identifica a fatura de destino (Respeitando Option A: Shift se PAGA)
+            FaturaCartao fatura = obterFaturaParaLancamento(cartao, mesFatura, anoFatura);
 
             // Ajusta última parcela para cobrir diferença de arredondamento
             BigDecimal valorEstaParcela = valorParcela;
@@ -216,22 +233,160 @@ public class CartaoCreditoService {
     }
 
     @Transactional
-    public FaturaCartaoResponse pagarFatura(Long faturaId) {
-        FaturaCartao fatura = findFaturaById(faturaId);
-
-        if (fatura.getStatus() == StatusFatura.PAGA) {
-            throw new BusinessException("Fatura já está paga.");
+    public FaturaCartaoResponse pagarFatura(Long faturaId, PagarFaturaRequest request) {
+        String idempotencyKey = generateIdempotencyKey(faturaId, request);
+        
+        // 1. Checa idempotência (Sem Lock)
+        Optional<IdempotencyControl> existingControl = idempotencyRepository.findByIdempotencyKey(idempotencyKey);
+        if (existingControl.isPresent()) {
+            IdempotencyControl control = existingControl.get();
+            if (control.getStatus() == IdempotencyStatus.SUCCESS) {
+                log.info("[Idempotency] Pagamento já processado com sucesso: {}", idempotencyKey);
+                return buscarFatura(faturaId);
+            }
+            if (control.getStatus() == IdempotencyStatus.PROCESSING) {
+                log.warn("[Idempotency] Pagamento em processamento: {}", idempotencyKey);
+                throw new BusinessException("Pagamento em processamento. Aguarde alguns instantes.");
+            }
         }
 
-        fatura.setStatus(StatusFatura.PAGA);
-        fatura.getParcelas().forEach(p -> p.setPaga(true));
+        // 2. Inicia/Atualiza controle para PROCESSING
+        IdempotencyControl control = existingControl.orElseGet(() -> IdempotencyControl.builder()
+                .idempotencyKey(idempotencyKey)
+                .build());
+        control.setStatus(IdempotencyStatus.PROCESSING);
+        idempotencyRepository.saveAndFlush(control);
 
-        // Cria transação de pagamento da fatura (DEBITO na conta pagadora)
-        // O pagamento real da fatura será feito pelo usuário via transação normal
-        fatura = faturaRepository.save(fatura);
-        log.info("[tenant={}] Fatura paga: id={} valor={}", fatura.getTenantId(), faturaId, fatura.getValorTotal());
+        try {
+            log.info("[Pagamento] Iniciando processamento de fatura id={} contaId={}", faturaId, request.contaId());
 
-        return toFaturaResponse(fatura);
+            // 3. Ordem rigorosa de Lock (Conta -> Fatura) para evitar Deadlocks
+            Conta contaPagadora = contaRepository.findByIdWithLock(request.contaId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Conta", request.contaId()));
+            
+            FaturaCartao fatura = faturaRepository.findByIdWithLock(faturaId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Fatura", faturaId));
+
+            // 4. Validações Críticas (Com Lock)
+            if (fatura.getStatus() == StatusFatura.PAGA) {
+                updateIdempotencyStatus(control, IdempotencyStatus.SUCCESS);
+                return toFaturaResponse(fatura);
+            }
+
+            if (fatura.getStatus() != StatusFatura.FECHADA && 
+                fatura.getStatus() != StatusFatura.ATRASADA &&
+                fatura.getStatus() != StatusFatura.ABERTA) {
+                throw new BusinessException("Apenas faturas FECHADAS, ATRASADAS ou ABERTAS podem ser pagas.");
+            }
+
+            LocalDate dataPagamento = request.dataPagamento() != null ? request.dataPagamento() : dateProvider.now();
+
+            // 5. Cálculo e Precisão Monetária (Ledger as Truth)
+            BigDecimal valorFatura = fatura.getParcelas().stream()
+                    .filter(p -> p.getTransacao() != null
+                            && p.getTransacao().getDeletedAt() == null
+                            && p.getTransacao().getStatus() != StatusTransacao.CANCELADO)
+                    .map(Parcela::getValorParcela)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .setScale(2, RoundingMode.HALF_EVEN);
+
+            // Valida Saldo e Valor da Fatura
+            if (valorFatura.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new BusinessException("Fatura sem lançamentos não pode ser paga.");
+            }
+
+            BigDecimal saldoAtual = contaRepository.calcularSaldo(contaPagadora.getId());
+            if (saldoAtual == null) saldoAtual = BigDecimal.ZERO; // Fallback de segurança
+
+            if (saldoAtual.compareTo(valorFatura) < 0) {
+                throw new SaldoInsuficienteException(contaPagadora.getNome(), saldoAtual, valorFatura);
+            }
+
+            // 6. Registro Contábil (Atomic Ledger Entry)
+            String descricaoSnapshot = String.format("Pagamento fatura %s - Ciclo %02d/%d", 
+                    fatura.getCartao().getBandeira(), fatura.getMesReferencia(), fatura.getAnoReferencia());
+
+            Transacao transacaoPagamento = Transacao.builder()
+                    .descricao(descricaoSnapshot)
+                    .valor(valorFatura)
+                    .data(dataPagamento)
+                    .dataPagamento(dataPagamento)
+                    .tipo(TipoTransacao.DESPESA)
+                    .status(StatusTransacao.PAGO)
+                    .numeroParcelas(1)
+                    .idempotencyKey(idempotencyKey)
+                    .observacao("Snapshot: Valor original " + valorFatura)
+                    .build();
+            transacaoPagamento.setTenantId(fatura.getTenantId());
+
+            // Lançamento CRÉDITO na conta do cartão
+            Lancamento creditoCartao = Lancamento.builder()
+                    .conta(fatura.getCartao().getConta())
+                    .valor(valorFatura)
+                    .direcao(DirecaoLancamento.CREDITO)
+                    .descricao("Liquidação: " + descricaoSnapshot)
+                    .build();
+            transacaoPagamento.addLancamento(creditoCartao);
+
+            // Lançamento DÉBITO na conta corrente
+            Lancamento debitoContaCorrente = Lancamento.builder()
+                    .conta(contaPagadora)
+                    .valor(valorFatura)
+                    .direcao(DirecaoLancamento.DEBITO)
+                    .descricao("Débito: " + descricaoSnapshot)
+                    .build();
+            transacaoPagamento.addLancamento(debitoContaCorrente);
+
+            transacaoRepository.save(transacaoPagamento);
+
+            // 7. Consolidação
+            fatura.setStatus(StatusFatura.PAGA);
+            fatura.getParcelas().forEach(p -> p.setPaga(true));
+            faturaRepository.save(fatura);
+
+            updateIdempotencyStatus(control, IdempotencyStatus.SUCCESS);
+            log.info("[Pagamento] Fatura paga com sucesso: id={} transacao={}", faturaId, transacaoPagamento.getId());
+
+            return toFaturaResponse(fatura);
+
+        } catch (PessimisticLockException e) {
+            log.warn("[Pagamento] Falha de lock (concorrência) para fatura {}: {}", faturaId, e.getMessage());
+            updateIdempotencyStatus(control, IdempotencyStatus.FAILED);
+            throw new BusinessException("Sistema ocupado processando este pagamento. Tente novamente em alguns segundos.");
+        } catch (DataIntegrityViolationException e) {
+            log.error("[Pagamento] Violação de integridade (duplicate submission) para fatura {}: {}", faturaId, e.getMessage());
+            updateIdempotencyStatus(control, IdempotencyStatus.SUCCESS);
+            throw new BusinessException("Este pagamento já foi processado ou está em duplicidade.");
+        } catch (Exception e) {
+            log.error("[Pagamento] Erro inesperado ao pagar fatura {}: {}", faturaId, e.getMessage(), e);
+            updateIdempotencyStatus(control, IdempotencyStatus.FAILED);
+            throw e;
+        }
+    }
+
+    private void updateIdempotencyStatus(IdempotencyControl control, IdempotencyStatus status) {
+        control.setStatus(status);
+        idempotencyRepository.save(control);
+    }
+
+    private String generateIdempotencyKey(Long faturaId, PagarFaturaRequest request) {
+        if (request.idempotencyKey() != null && !request.idempotencyKey().isBlank()) {
+            return request.idempotencyKey();
+        }
+        try {
+            String raw = String.format("PAY_CC_%d_%d_%s", faturaId, request.contaId(), request.dataPagamento());
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(raw.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hash) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (NoSuchAlgorithmException e) {
+            return "PAY_CC_" + faturaId + "_" + System.currentTimeMillis();
+        }
     }
 
     /**
@@ -243,8 +398,10 @@ public class CartaoCreditoService {
         log.info("Processando faturas de cartão...");
         LocalDate hoje = dateProvider.now();
 
-        List<FaturaCartao> abertas = faturaRepository.findByStatus(StatusFatura.ABERTA);
-        for (FaturaCartao fatura : abertas) {
+        List<FaturaCartao> faturasAtivas = faturaRepository.findByStatus(StatusFatura.ABERTA);
+        for (FaturaCartao fatura : faturasAtivas) {
+            if (fatura.getStatus() == StatusFatura.PAGA) continue; // Dupla proteção
+
             CartaoCredito cartao = fatura.getCartao();
 
             // Fecha fatura se passou do dia de fechamento
@@ -289,14 +446,9 @@ public class CartaoCreditoService {
                 .build();
         transacao.addLancamento(debito);
 
-        // Vincular à fatura
-        LocalDate dataRef = calcularDataFatura(transacao.getData(), cartao.getDiaFechamento(), 0);
-        int mesFatura = dataRef.getMonthValue();
-        int anoFatura = dataRef.getYear();
-
-        FaturaCartao fatura = faturaRepository
-                .findByCartaoIdAndMesReferenciaAndAnoReferencia(cartao.getId(), mesFatura, anoFatura)
-                .orElseGet(() -> criarFatura(cartao, mesFatura, anoFatura));
+        // Vincular à fatura (Respeitando Option A: Shift se PAGA)
+        LocalDate dataVencimento = calcularDataVencimentoFatura(transacao.getData(), cartao.getDiaFechamento(), cartao.getDiaVencimento());
+        FaturaCartao fatura = obterFaturaParaLancamento(cartao, dataVencimento.getMonthValue(), dataVencimento.getYear());
 
         Parcela parcela = Parcela.builder()
                 .transacao(transacao)
@@ -306,8 +458,39 @@ public class CartaoCreditoService {
                 .dataVencimento(fatura.getDataVencimento())
                 .paga(false)
                 .build();
+        
+        // Ensure Master transaction indicates it's a CC transaction with 1 installment
+        transacao.setNumeroParcelas(1); 
+        
         fatura.adicionarParcela(parcela);
         faturaRepository.save(fatura);
+    }
+
+    @Transactional
+    public FaturaCartao obterFaturaParaLancamento(CartaoCredito cartao, int mes, int ano) {
+        int limiteSeguranca = 24; // Máximo de 2 anos de shift
+        int mesAtual = mes;
+        int anoAtual = ano;
+
+        while (limiteSeguranca-- > 0) {
+            final int m = mesAtual;
+            final int a = anoAtual;
+            FaturaCartao fatura = faturaRepository
+                    .findByCartaoIdAndMesReferenciaAndAnoReferencia(cartao.getId(), m, a)
+                    .orElseGet(() -> criarFatura(cartao, m, a));
+
+            if (fatura.getStatus() != StatusFatura.PAGA) {
+                return fatura;
+            }
+
+            // Se está paga, pula para o próximo mês
+            mesAtual++;
+            if (mesAtual > 12) {
+                mesAtual = 1;
+                anoAtual++;
+            }
+        }
+        throw new BusinessException("Não foi possível encontrar uma fatura disponível para lançamentos nos próximos 2 anos.");
     }
 
     private FaturaCartao criarFatura(CartaoCredito cartao, int mes, int ano) {
@@ -327,18 +510,30 @@ public class CartaoCreditoService {
     }
 
     /**
-     * Calcula em qual mês/ano a parcela N cai, baseado no dia de fechamento.
+     * Engine de Ciclo de Faturamento Senior (4 passos):
+     * 1. Determina o dia de fechamento real para o mês da compra.
+     * 2. Shift de Ciclo: Se diaCompra > diaFechamento, cai no próximo ciclo.
+     * 3. Define Vencimento Base: Baseado no mês do fechamento do ciclo.
+     * 4. Ajuste de Vencimento Mensal: Se diaVencimento < diaFechamento, o vencimento é no mês seguinte ao fechamento.
      */
-    public LocalDate calcularDataFatura(LocalDate dataCompra, int diaFechamento, int parcelaIndex) {
-        // Se a compra foi feita NO dia de fechamento ou ANTES, cai na fatura do mês atual.
-        // Se foi DEPOIS do fechamento, cai na fatura do mês seguinte (o "melhor dia").
-        LocalDate ref = dataCompra;
-        if (dataCompra.getDayOfMonth() > diaFechamento) {
-            ref = ref.plusMonths(1);
+    public LocalDate calcularDataVencimentoFatura(LocalDate dataCompra, int diaFechamento, int diaVencimento) {
+        // Passo 1 & 2: Determinar o fechamento do ciclo
+        LocalDate fechamentoCiclo = dataCompra.withDayOfMonth(Math.min(diaFechamento, dataCompra.lengthOfMonth()));
+        if (dataCompra.isAfter(fechamentoCiclo)) {
+            fechamentoCiclo = fechamentoCiclo.plusMonths(1);
+            fechamentoCiclo = fechamentoCiclo.withDayOfMonth(Math.min(diaFechamento, fechamentoCiclo.lengthOfMonth()));
         }
-        
-        // Adiciona o deslocamento da parcela
-        return ref.plusMonths(parcelaIndex).with(TemporalAdjusters.firstDayOfMonth());
+
+        // Passo 3: Vencimento baseado no mês do fechamento
+        LocalDate vencimento = fechamentoCiclo.withDayOfMonth(Math.min(diaVencimento, fechamentoCiclo.lengthOfMonth()));
+
+        // Passo 4: Regra fixa (vencimento posterior ao fechamento em um calendário civil)
+        if (diaVencimento < diaFechamento) {
+            vencimento = vencimento.plusMonths(1);
+            vencimento = vencimento.withDayOfMonth(Math.min(diaVencimento, vencimento.lengthOfMonth()));
+        }
+
+        return vencimento;
     }
 
     private CartaoCredito findCartaoById(Long id) {
@@ -352,10 +547,39 @@ public class CartaoCreditoService {
     }
 
     private CartaoCreditoResponse toCartaoResponse(CartaoCredito c) {
+        LocalDate hoje = dateProvider.now();
+        
+        // 1. Busca resumo financeiro em UMA query agregada (Alta Performance)
+        CartaoCreditoResumoProjection resumo = parcelaRepository.getResumoFinanceiro(c.getId());
+        
+        BigDecimal utilizado = resumo.getTotalUtilizado();
+        BigDecimal limiteTotal = c.getLimite();
+        BigDecimal disponivel = limiteTotal.subtract(utilizado).max(BigDecimal.ZERO);
+        
+        double percentual = limiteTotal.compareTo(BigDecimal.ZERO) > 0
+                ? utilizado.divide(limiteTotal, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100)).doubleValue()
+                : 0.0;
+
+        // 2. Cálculo de ciclo atual para "Valor da Fatura Aberta"
+        LocalDate vencimentoAtual = calcularDataVencimentoFatura(hoje, c.getDiaFechamento(), c.getDiaVencimento());
+        
+        // 3. Melhor dia para compra (Dia seguinte ao fechamento)
+        int melhorDia = c.getDiaFechamento() + 1;
+        if (melhorDia > hoje.lengthOfMonth()) melhorDia = 1;
+
+        // 4. Dias para fechar (Contagem regressiva inteligente)
+        LocalDate fechamentoEsteMes = hoje.withDayOfMonth(Math.min(c.getDiaFechamento(), hoje.lengthOfMonth()));
+        if (hoje.isAfter(fechamentoEsteMes)) {
+            fechamentoEsteMes = fechamentoEsteMes.plusMonths(1);
+            fechamentoEsteMes = fechamentoEsteMes.withDayOfMonth(Math.min(c.getDiaFechamento(), fechamentoEsteMes.lengthOfMonth()));
+        }
+        int diasParaFechar = (int) java.time.temporal.ChronoUnit.DAYS.between(hoje, fechamentoEsteMes);
+
         return new CartaoCreditoResponse(
                 c.getId(), c.getConta().getId(), c.getConta().getNome(),
-                c.getBandeira(), c.getLimite(),
-                c.getDiaFechamento(), c.getDiaVencimento(),
+                c.getBandeira(), limiteTotal, utilizado, disponivel,
+                resumo.getValorAberta(), resumo.getValorFechadas(), utilizado,
+                melhorDia, diasParaFechar, vencimentoAtual,
                 c.getCreatedAt());
     }
 
@@ -386,17 +610,28 @@ public class CartaoCreditoService {
             }
         }
 
-        // Lógica dinâmica para o status da fatura
+        // Lógica dinâmica para o status da fatura (Regra Temporal Fintech)
         StatusFatura statusCalculado = f.getStatus();
-        if (statusCalculado == StatusFatura.ABERTA || statusCalculado == StatusFatura.FECHADA) {
+        if (statusCalculado != StatusFatura.PAGA) {
             LocalDate hoje = dateProvider.now();
-            int diaFechamento = f.getCartao().getDiaFechamento();
-            LocalDate dataFechamento = LocalDate.of(f.getAnoReferencia(), f.getMesReferencia(), diaFechamento);
             
-            if (hoje.isAfter(f.getDataVencimento()) && statusCalculado != StatusFatura.PAGA) {
+            // Determina as datas críticas do ciclo desta fatura
+            int diaFechamento = f.getCartao().getDiaFechamento();
+            LocalDate dataVencimento = f.getDataVencimento();
+            
+            // O fechamento ocorre no mês de vencimento (venc >= fech) ou no mês anterior (venc < fech)
+            LocalDate dataFechamento = dataVencimento.withDayOfMonth(Math.min(diaFechamento, dataVencimento.lengthOfMonth()));
+            if (f.getCartao().getDiaVencimento() < diaFechamento) {
+                dataFechamento = dataFechamento.minusMonths(1);
+                dataFechamento = dataFechamento.withDayOfMonth(Math.min(diaFechamento, dataFechamento.lengthOfMonth()));
+            }
+
+            if (hoje.isAfter(dataVencimento)) {
                 statusCalculado = StatusFatura.ATRASADA;
             } else if (hoje.isAfter(dataFechamento) || hoje.isEqual(dataFechamento)) {
                 statusCalculado = StatusFatura.FECHADA;
+            } else {
+                statusCalculado = StatusFatura.ABERTA;
             }
         }
 
