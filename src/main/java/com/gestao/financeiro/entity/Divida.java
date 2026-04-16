@@ -29,7 +29,7 @@ import java.util.List;
 public class Divida extends TenantEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "pessoa_id", nullable = false)
+    @JoinColumn(name = "pessoa_id", nullable = true)
     private Pessoa pessoa;
 
     @Column(nullable = false)

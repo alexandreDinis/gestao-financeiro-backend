@@ -27,18 +27,38 @@ public interface DividaRepository extends JpaRepository<Divida, Long> {
         LEFT JOIN FETCH d.parcelas p
         WHERE (:tipo IS NULL OR d.tipo = :tipo)
           AND (:pessoaId IS NULL OR d.pessoa.id = :pessoaId)
-          AND (:ano IS NULL OR EXISTS (
-                SELECT p2 FROM ParcelaDivida p2 
-                WHERE p2.divida = d 
-                  AND YEAR(p2.dataVencimento) = :ano 
-                  AND (:mes IS NULL OR MONTH(p2.dataVencimento) = :mes)
-                  AND (:status IS NULL 
-                       OR (:status = 'PENDENTE' AND p2.status != com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
-                       OR (:status = 'PAGA' AND p2.status = com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
-                       OR (:status = 'ATRASADA' AND p2.status = com.gestao.financeiro.entity.enums.StatusTransacao.ATRASADO)
-                  )
+          AND (:ano IS NULL OR (
+                EXISTS (
+                    SELECT p2 FROM ParcelaDivida p2 
+                    WHERE p2.divida = d 
+                      AND YEAR(p2.dataVencimento) = :ano 
+                      AND (:mes IS NULL OR MONTH(p2.dataVencimento) = :mes)
+                      AND (:status IS NULL 
+                           OR (:status = 'PENDENTE' AND p2.status != com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
+                           OR (:status = 'PAGA' AND p2.status = com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
+                           OR (:status = 'ATRASADA' AND p2.status = com.gestao.financeiro.entity.enums.StatusTransacao.ATRASADO)
+                      )
+                )
+                OR (
+                    d.recorrente = true
+                    AND (YEAR(d.dataInicio) < :ano OR (YEAR(d.dataInicio) = :ano AND (:mes IS NULL OR MONTH(d.dataInicio) <= :mes)))
+                    AND (d.dataFim IS NULL OR YEAR(d.dataFim) > :ano OR (YEAR(d.dataFim) = :ano AND (:mes IS NULL OR MONTH(d.dataFim) >= :mes)))
+                )
           ))
-          AND (:status IS NULL OR (:ano IS NULL AND CAST(d.status AS string) = :status) OR (:ano IS NOT NULL))
+          AND (:status IS NULL 
+               OR (:ano IS NOT NULL)
+               OR (:ano IS NULL AND (
+                    CAST(d.status AS string) = :status
+                    OR EXISTS (
+                        SELECT p3 FROM ParcelaDivida p3
+                        WHERE p3.divida = d
+                          AND p3.deletedAt IS NULL
+                          AND ((:status = 'PENDENTE' AND p3.status != com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
+                               OR (:status = 'PAGA' AND p3.status = com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
+                               OR (:status = 'ATRASADA' AND p3.status = com.gestao.financeiro.entity.enums.StatusTransacao.ATRASADO))
+                    )
+               ))
+          )
           AND d.deletedAt IS NULL
         ORDER BY d.dataInicio DESC
     """)
@@ -90,18 +110,38 @@ public interface DividaRepository extends JpaRepository<Divida, Long> {
         LEFT JOIN FETCH d.parcelas p
         WHERE (:tipo IS NULL OR d.tipo = :tipo)
           AND (:pessoaId IS NULL OR d.pessoa.id = :pessoaId)
-          AND (:ano IS NULL OR EXISTS (
-                SELECT p2 FROM ParcelaDivida p2 
-                WHERE p2.divida = d 
-                  AND YEAR(p2.dataVencimento) = :ano 
-                  AND (:mes IS NULL OR MONTH(p2.dataVencimento) = :mes)
-                  AND (:status IS NULL 
-                       OR (:status = 'PENDENTE' AND p2.status != com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
-                       OR (:status = 'PAGA' AND p2.status = com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
-                       OR (:status = 'ATRASADA' AND p2.status = com.gestao.financeiro.entity.enums.StatusTransacao.ATRASADO)
-                  )
+          AND (:ano IS NULL OR (
+                EXISTS (
+                    SELECT p2 FROM ParcelaDivida p2 
+                    WHERE p2.divida = d 
+                      AND YEAR(p2.dataVencimento) = :ano 
+                      AND (:mes IS NULL OR MONTH(p2.dataVencimento) = :mes)
+                      AND (:status IS NULL 
+                           OR (:status = 'PENDENTE' AND p2.status != com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
+                           OR (:status = 'PAGA' AND p2.status = com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
+                           OR (:status = 'ATRASADA' AND p2.status = com.gestao.financeiro.entity.enums.StatusTransacao.ATRASADO)
+                      )
+                )
+                OR (
+                    d.recorrente = true
+                    AND (YEAR(d.dataInicio) < :ano OR (YEAR(d.dataInicio) = :ano AND (:mes IS NULL OR MONTH(d.dataInicio) <= :mes)))
+                    AND (d.dataFim IS NULL OR YEAR(d.dataFim) > :ano OR (YEAR(d.dataFim) = :ano AND (:mes IS NULL OR MONTH(d.dataFim) >= :mes)))
+                )
           ))
-          AND (:status IS NULL OR (:ano IS NULL AND CAST(d.status AS string) = :status) OR (:ano IS NOT NULL))
+          AND (:status IS NULL 
+               OR (:ano IS NOT NULL)
+               OR (:ano IS NULL AND (
+                    CAST(d.status AS string) = :status
+                    OR EXISTS (
+                        SELECT p3 FROM ParcelaDivida p3
+                        WHERE p3.divida = d
+                          AND p3.deletedAt IS NULL
+                          AND ((:status = 'PENDENTE' AND p3.status != com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
+                               OR (:status = 'PAGA' AND p3.status = com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
+                               OR (:status = 'ATRASADA' AND p3.status = com.gestao.financeiro.entity.enums.StatusTransacao.ATRASADO))
+                    )
+               ))
+          )
           AND d.deletedAt IS NULL
         ORDER BY d.dataInicio DESC
     """)
