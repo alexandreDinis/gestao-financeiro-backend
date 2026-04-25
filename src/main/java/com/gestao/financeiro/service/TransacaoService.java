@@ -191,6 +191,7 @@ public class TransacaoService {
                 .recorrenciaId(request.recorrenciaId())
                 .referencia(request.referencia())
                 .categoria(categoria)
+                .valorPrevisto(request.valorPrevisto())
                 .build();
         transacao.setTenantId(tenantId);
 
@@ -257,10 +258,57 @@ public class TransacaoService {
     }
 
     /**
-     * Marcar transação como paga.
+     * Atualiza uma transação existente preservando o valorPrevisto original se houver.
      */
     @Transactional
-    public TransacaoResponse pagar(Long id) {
+    public TransacaoResponse atualizar(Long id, TransacaoRequest request) {
+        Transacao transacao = findById(id);
+
+        if (transacao.getStatus() == StatusTransacao.PAGO || transacao.getStatus() == StatusTransacao.CANCELADO) {
+            throw new BusinessException("Não é possível editar uma transação paga ou cancelada.");
+        }
+
+        // Atualiza campos permitidos
+        transacao.setDescricao(request.descricao());
+        transacao.setValor(request.valor());
+        transacao.setData(request.data());
+        transacao.setObservacao(request.observacao());
+        
+        // Atualiza categoria se fornecida
+        if (request.categoriaId() != null) {
+            Categoria categoria = categoriaRepository.findById(request.categoriaId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
+            transacao.setCategoria(categoria);
+        } else {
+            transacao.setCategoria(null);
+        }
+
+        // Atualiza conta se fornecida e diferente
+        Conta novaConta = null;
+        if (request.contaOrigemId() != null) {
+            novaConta = contaRepository.findById(request.contaOrigemId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Conta", request.contaOrigemId()));
+            
+            for (Lancamento l : transacao.getLancamentos()) {
+                l.setConta(novaConta);
+            }
+        }
+
+        // Atualiza valor nos lançamentos existentes
+        transacao.getLancamentos().forEach(l -> {
+             l.setValor(request.valor());
+             l.setDescricao((l.getDirecao() == com.gestao.financeiro.entity.enums.DirecaoLancamento.DEBITO ? "Despesa: " : "Receita: ") + request.descricao());
+        });
+
+        transacao = transacaoRepository.save(transacao);
+        return transacaoMapper.toResponse(transacao);
+    }
+
+    /**
+     * Marcar transação como paga, permitindo ajuste de valor e conta.
+     */
+    @Transactional
+    public TransacaoResponse pagar(Long id, java.math.BigDecimal novoValor, Long novaContaId, LocalDate dataPagamento) {
         Transacao transacao = findById(id);
 
         if (transacao.getStatus() == StatusTransacao.PAGO) {
@@ -270,13 +318,53 @@ public class TransacaoService {
             throw new BusinessException("Não é possível pagar transação cancelada.");
         }
 
+        // Ajusta valor se fornecido
+        if (novoValor != null) {
+            transacao.setValor(novoValor);
+            transacao.getLancamentos().forEach(l -> l.setValor(novoValor));
+        }
+
+        // Ajusta conta se fornecida
+        if (novaContaId != null) {
+            Conta conta = contaRepository.findById(novaContaId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Conta", novaContaId));
+            
+            // Para Despesas/Receitas, atualiza a conta do lançamento
+            // Para Transferências, assumimos que a nova conta é a conta de ORIGEM
+            for (Lancamento l : transacao.getLancamentos()) {
+                if (transacao.getTipo() == TipoTransacao.TRANSFERENCIA) {
+                    if (l.getDirecao() == DirecaoLancamento.DEBITO) {
+                        l.setConta(conta);
+                    }
+                } else {
+                    l.setConta(conta);
+                }
+            }
+        }
+
         transacao.setStatus(StatusTransacao.PAGO);
-        transacao.setDataPagamento(LocalDate.now());
+        transacao.setDataPagamento(dataPagamento != null ? dataPagamento : LocalDate.now());
+        
+        // Se a data do lançamento for diferente da data do pagamento e o usuário ajustou,
+        // podemos opcionalmente atualizar a data do lançamento também. 
+        // Mas por agora vamos apenas atualizar a data da transação se for fornecida.
+        if (dataPagamento != null) {
+            transacao.setData(dataPagamento);
+        }
 
         transacao = transacaoRepository.save(transacao);
-        log.info("[tenant={}] Transação paga: id={}", transacao.getTenantId(), id);
+        log.info("[tenant={}] Transação paga com ajuste: id={} valor={} contaId={}", 
+                transacao.getTenantId(), id, transacao.getValor(), novaContaId);
 
         return transacaoMapper.toResponse(transacao);
+    }
+
+    /**
+     * Marcar transação como paga (sem ajustes).
+     */
+    @Transactional
+    public TransacaoResponse pagar(Long id) {
+        return pagar(id, null, null, null);
     }
 
     /**

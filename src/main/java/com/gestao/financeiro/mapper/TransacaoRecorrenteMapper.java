@@ -23,6 +23,7 @@ public class TransacaoRecorrenteMapper {
                 entity.getCategoria() != null ? entity.getCategoria().getNome() : null,
                 entity.getConta() != null ? entity.getConta().getId() : null,
                 entity.getConta() != null ? entity.getConta().getNome() : null,
+                entity.getValorVariavel(),
                 entity.getCreatedAt()
         );
     }
@@ -37,6 +38,7 @@ public class TransacaoRecorrenteMapper {
                 .dataFim(request.dataFim())
                 .diaVencimento(request.diaVencimento())
                 .ativa(true)
+                .valorVariavel(request.valorVariavel() != null ? request.valorVariavel() : false)
                 .build();
     }
 
@@ -48,5 +50,8 @@ public class TransacaoRecorrenteMapper {
         entity.setDataInicio(request.dataInicio());
         entity.setDataFim(request.dataFim());
         entity.setDiaVencimento(request.diaVencimento());
+        if (request.valorVariavel() != null) {
+            entity.setValorVariavel(request.valorVariavel());
+        }
     }
 }

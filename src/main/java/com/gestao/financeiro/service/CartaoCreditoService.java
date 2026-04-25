@@ -311,7 +311,7 @@ public class CartaoCreditoService {
                     .valor(valorFatura)
                     .data(dataPagamento)
                     .dataPagamento(dataPagamento)
-                    .tipo(TipoTransacao.DESPESA)
+                    .tipo(TipoTransacao.TRANSFERENCIA)
                     .status(StatusTransacao.PAGO)
                     .numeroParcelas(1)
                     .idempotencyKey(idempotencyKey)
@@ -587,14 +587,28 @@ public class CartaoCreditoService {
         // Filtramos as parcelas cujas transações ainda existem (não foram deletadas)
         List<ParcelaResponse> parcelasRes = new ArrayList<>();
         BigDecimal totalReal = BigDecimal.ZERO;
+        BigDecimal totalRecorrente = BigDecimal.ZERO;
+        BigDecimal totalParcelado = BigDecimal.ZERO;
+        BigDecimal totalUnico = BigDecimal.ZERO;
 
         for (Parcela p : f.getParcelas()) {
             boolean ativa = true;
             String descricao = "Transação Excluída";
             try {
-                if (p.getTransacao() != null && p.getTransacao().getDeletedAt() == null && p.getTransacao().getStatus() != StatusTransacao.CANCELADO) {
-                    descricao = p.getTransacao().getDescricao();
-                    totalReal = totalReal.add(p.getValorParcela());
+                Transacao t = p.getTransacao();
+                if (t != null && t.getDeletedAt() == null && t.getStatus() != StatusTransacao.CANCELADO) {
+                    descricao = t.getDescricao();
+                    BigDecimal valor = p.getValorParcela();
+                    totalReal = totalReal.add(valor);
+
+                    // Lógica de Categorização para o Resumo
+                    if (t.getRecorrenciaId() != null) {
+                        totalRecorrente = totalRecorrente.add(valor);
+                    } else if (t.getNumeroParcelas() != null && t.getNumeroParcelas() > 1) {
+                        totalParcelado = totalParcelado.add(valor);
+                    } else {
+                        totalUnico = totalUnico.add(valor);
+                    }
                 } else {
                     ativa = false;
                 }
@@ -638,7 +652,8 @@ public class CartaoCreditoService {
         return new FaturaCartaoResponse(
                 f.getId(), f.getCartao().getId(), f.getCartao().getBandeira(),
                 f.getMesReferencia(), f.getAnoReferencia(),
-                totalReal, f.getDataVencimento().toString(), statusCalculado,
+                totalReal, totalRecorrente, totalParcelado, totalUnico,
+                f.getDataVencimento().toString(), statusCalculado,
                 parcelasRes, f.getCreatedAt());
     }
 }

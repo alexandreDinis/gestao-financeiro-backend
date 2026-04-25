@@ -258,7 +258,8 @@ public class DividaService {
                 false, // geradoAutomaticamente
                 null, // recorrenciaId
                 YearMonth.from(parcela.getDataVencimento()), // referencia
-                StatusTransacao.PAGO
+                StatusTransacao.PAGO,
+                null // valorPrevisto
         );
 
         com.gestao.financeiro.dto.response.TransacaoResponse txResponse = transacaoService.criar(txRequest);
@@ -373,7 +374,8 @@ public class DividaService {
                 false, // geradoAutomaticamente
                 null, // recorrenciaId
                 YearMonth.from(parcelasOrdenadas.get(0).getDataVencimento()), // referencia
-                StatusTransacao.PAGO
+                StatusTransacao.PAGO,
+                null // valorPrevisto
         );
 
         com.gestao.financeiro.dto.response.TransacaoResponse txResponse = transacaoService.criar(txRequest);

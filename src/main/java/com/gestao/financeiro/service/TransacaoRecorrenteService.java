@@ -81,14 +81,19 @@ public class TransacaoRecorrenteService {
         log.info("[tenant={}] Recorrência criada: id={} desc={} periodicidade={}",
                 tenantId, recorrente.getId(), recorrente.getDescricao(), recorrente.getPeriodicidade());
 
-        // Geração imediata da primeira transação se a data de início for hoje
+        // Geração imediata da transação para o mês atual (se ainda não houver)
         LocalDate hoje = dateProvider.now();
-        if (recorrente.isAtivaEm(hoje) && deveGerarHoje(recorrente, hoje)) {
+        java.time.YearMonth mesAtual = java.time.YearMonth.from(hoje);
+        java.time.YearMonth mesInicio = java.time.YearMonth.from(recorrente.getDataInicio());
+
+        if (recorrente.getAtiva() && (mesAtual.equals(mesInicio) || hoje.isAfter(recorrente.getDataInicio()))) {
             try {
-                log.info("[tenant={}] Gerando primeira transação da recorrência id={}", tenantId, recorrente.getId());
-                gerarTransacao(recorrente, hoje);
+                log.info("[tenant={}] Verificando geração imediata para recorrência id={}", tenantId, recorrente.getId());
+                if (deveGerarParaReferencia(recorrente, hoje)) {
+                    gerarTransacao(recorrente, hoje);
+                }
             } catch (Exception e) {
-                log.error("[tenant={}] Erro na geração imediata da recorrência id={}: {}",
+                log.error("[tenant={}] Erro na geração inicial da recorrência id={}: {}",
                         tenantId, recorrente.getId(), e.getMessage());
             }
         }
@@ -134,10 +139,17 @@ public class TransacaoRecorrenteService {
     @Scheduled(cron = "0 0 6 * * *")
     @Transactional
     public void processarRecorrencias() {
-        log.info("Iniciando processamento de recorrências...");
+        processarRecorrencias(null);
+    }
+
+    @Transactional
+    public void processarRecorrencias(Long tenantId) {
+        log.info("Iniciando processamento de recorrências para tenant: {}", tenantId != null ? tenantId : "TODOS");
         LocalDate hoje = dateProvider.now();
 
-        List<TransacaoRecorrente> ativas = recorrenteRepository.findByAtivaTrue();
+        List<TransacaoRecorrente> ativas = tenantId != null 
+                ? recorrenteRepository.findByAtivaTrueAndTenantId(tenantId)
+                : recorrenteRepository.findByAtivaTrue();
         int geradas = 0;
 
         for (TransacaoRecorrente rec : ativas) {
@@ -166,10 +178,9 @@ public class TransacaoRecorrenteService {
             case DIARIA -> true; // Diária sempre gera se não houver no dia (ajustar se necessário para multiplas por mês)
             case SEMANAL, QUINZENAL -> deveGerarHoje(rec, hoje); // Mantemos restrito para não duplicar na semana
             case MENSAL, ANUAL -> {
-                int diaRec = (rec.getDiaVencimento() != null) 
-                    ? Math.min(rec.getDiaVencimento(), hoje.lengthOfMonth())
-                    : rec.getDataInicio().getDayOfMonth();
-                yield hoje.getDayOfMonth() >= diaRec;
+                // Sempre gera a transação se estamos no mês/ano de início ou posterior,
+                // para que ela apareça na agenda de "Contas a Pagar".
+                yield true;
             }
         };
     }
@@ -192,7 +203,8 @@ public class TransacaoRecorrenteService {
                 true, // geradoAutomaticamente
                 rec.getId(), // recorrenciaId
                 YearMonth.from(hoje), // referencia
-                null // status
+                StatusTransacao.PENDENTE, // status
+                Boolean.TRUE.equals(rec.getValorVariavel()) ? rec.getValor() : null // valorPrevisto
         );
 
         transacaoService.criar(request);

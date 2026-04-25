@@ -44,7 +44,12 @@ public class OrcamentoService {
 
     /**
      * Resumo: limite vs gasto real por categoria.
-     * Gasto real vem da soma de transações DESPESA PAGO na categoria no mês.
+     * Gasto real vem de DUAS fontes:
+     * 1. Transações DESPESA com status PAGO (gastos diretos de débito)
+     * 2. Parcelas de cartão de crédito que vencem no período (impacto mensal)
+     * 
+     * Isso garante que compras no cartão de crédito também sejam
+     * contabilizadas no orçamento.
      */
     @SuppressWarnings("unchecked")
     public List<OrcamentoResumoResponse> resumo(Integer mes, Integer ano) {
@@ -54,7 +59,9 @@ public class OrcamentoService {
         LocalDate fim = inicio.with(TemporalAdjusters.lastDayOfMonth());
 
         return orcamentos.stream().map(orc -> {
-            // Calcula gasto REAL da categoria no período
+            Long catId = orc.getCategoria().getId();
+
+            // 1. Gastos DIRETOS (transação no débito, status PAGO)
             String jpql = """
                 SELECT COALESCE(SUM(t.valor), 0)
                 FROM Transacao t
@@ -65,11 +72,30 @@ public class OrcamentoService {
                   AND t.deletedAt IS NULL
             """;
 
-            BigDecimal gasto = (BigDecimal) entityManager.createQuery(jpql)
-                    .setParameter("catId", orc.getCategoria().getId())
+            BigDecimal gastoTransacao = (BigDecimal) entityManager.createQuery(jpql)
+                    .setParameter("catId", catId)
                     .setParameter("inicio", inicio)
                     .setParameter("fim", fim)
                     .getSingleResult();
+
+            // 2. Parcelas de CARTÃO DE CRÉDITO que vencem no período (impacto mensal)
+            String jpqlParcela = """
+                SELECT COALESCE(SUM(p.valorParcela), 0)
+                FROM Parcela p
+                JOIN p.transacao t
+                WHERE t.categoria.id = :catId
+                  AND p.dataVencimento BETWEEN :inicio AND :fim
+                  AND t.deletedAt IS NULL
+                  AND t.status <> 'CANCELADO'
+            """;
+
+            BigDecimal gastoParcela = (BigDecimal) entityManager.createQuery(jpqlParcela)
+                    .setParameter("catId", catId)
+                    .setParameter("inicio", inicio)
+                    .setParameter("fim", fim)
+                    .getSingleResult();
+
+            BigDecimal gasto = gastoTransacao.add(gastoParcela);
 
             BigDecimal restante = orc.getLimite().subtract(gasto);
             double percentual = orc.getLimite().compareTo(BigDecimal.ZERO) > 0

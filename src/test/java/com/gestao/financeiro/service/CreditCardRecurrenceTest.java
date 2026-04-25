@@ -14,6 +14,8 @@ import com.gestao.financeiro.repository.CategoriaRepository;
 import com.gestao.financeiro.repository.FaturaCartaoRepository;
 import com.gestao.financeiro.repository.TransacaoRepository;
 import com.gestao.financeiro.config.TenantContext;
+import com.gestao.financeiro.entity.enums.StatusTenant;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,13 +51,22 @@ class CreditCardRecurrenceTest {
     @MockBean
     private DateProvider dateProvider;
 
+    @Autowired
+    private com.gestao.financeiro.repository.TenantRepository tenantRepository;
+
+    private Long tenantId;
     private Long cartaoId;
     private Long contaId;
     private Long categoriaId;
 
     @BeforeEach
     void setup() {
-        TenantContext.setTenantId(1L);
+        com.gestao.financeiro.entity.Tenant tenant = new com.gestao.financeiro.entity.Tenant();
+        tenant.setNome("Test Tenant " + System.currentTimeMillis());
+        tenant.setStatus(StatusTenant.ATIVO);
+        tenantId = tenantRepository.save(tenant).getId();
+
+        TenantContext.setTenantId(tenantId);
         when(dateProvider.now()).thenReturn(LocalDate.now());
 
         // Criar categoria de testes
@@ -65,7 +76,7 @@ class CreditCardRecurrenceTest {
                 .icone("tv")
                 .cor("#FF0000")
                 .build();
-        categoria.setTenantId(1L);
+        categoria.setTenantId(tenantId);
         categoria = categoriaRepository.save(categoria);
         categoriaId = categoria.getId();
 
@@ -78,6 +89,11 @@ class CreditCardRecurrenceTest {
         contaId = cartao.contaId();
     }
 
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
+    }
+
     @Test
     void deveGerarTransacaoRecorrenteNoCicloCorretoDoCartao() {
         // --- MÊS 1: ABRIL ---
@@ -88,7 +104,7 @@ class CreditCardRecurrenceTest {
         // Criar recorrência de R$ 50,00 começando hoje
         TransacaoRecorrenteRequest recReq = new TransacaoRecorrenteRequest(
                 "Netflix", BigDecimal.valueOf(50.0), TipoTransacao.DESPESA,
-                Periodicidade.MENSAL, hojeAbril, null, 11, categoriaId, contaId
+                Periodicidade.MENSAL, hojeAbril, null, 11, categoriaId, contaId, false
         );
         TransacaoRecorrenteResponse recRes = transacaoRecorrenteService.criar(recReq);
         Long recId = recRes.id();

@@ -30,4 +30,6 @@ public interface FaturaCartaoRepository extends JpaRepository<FaturaCartao, Long
     List<FaturaCartao> findByStatus(StatusFatura status);
 
     List<FaturaCartao> findByCartaoIdAndStatusIn(Long cartaoId, List<StatusFatura> statuses);
+
+    List<FaturaCartao> findByTenantIdAndStatusIn(Long tenantId, List<StatusFatura> statuses);
 }

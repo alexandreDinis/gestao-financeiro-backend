@@ -40,5 +40,6 @@ public record TransacaoRequest(
 
         Long recorrenciaId,
         java.time.YearMonth referencia,
-        com.gestao.financeiro.entity.enums.StatusTransacao status
+        com.gestao.financeiro.entity.enums.StatusTransacao status,
+        BigDecimal valorPrevisto
 ) {}

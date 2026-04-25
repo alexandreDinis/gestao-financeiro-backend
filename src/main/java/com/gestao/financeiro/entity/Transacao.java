@@ -49,6 +49,9 @@ public class Transacao extends TenantEntity {
     @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal valor;
 
+    @Column(name = "valor_previsto", precision = 19, scale = 2)
+    private BigDecimal valorPrevisto;
+
     @Column(nullable = false)
     private LocalDate data;
 

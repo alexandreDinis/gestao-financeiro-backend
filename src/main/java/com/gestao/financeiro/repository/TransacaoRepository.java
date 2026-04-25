@@ -44,6 +44,9 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
           AND (:geradoAutomaticamente IS NULL OR t.geradoAutomaticamente = :geradoAutomaticamente)
           AND (:busca IS NULL OR LOWER(CAST(t.descricao AS string)) LIKE LOWER(CONCAT('%', CAST(:busca AS string), '%')))
           AND (t.numeroParcelas IS NULL OR t.numeroParcelas <= 1)
+          AND NOT EXISTS (
+                SELECT l2 FROM Lancamento l2 WHERE l2.transacao = t AND l2.conta.tipo = 'CARTAO_CREDITO'
+          )
           AND t.deletedAt IS NULL
     """)
     Page<Transacao> buscarComFiltros(
@@ -69,10 +72,13 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
         LEFT JOIN FETCH t.categoria
         LEFT JOIN FETCH t.lancamentos l
         LEFT JOIN FETCH l.conta
-        WHERE t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+        WHERE t.tenantId = :tenantId AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND NOT EXISTS (
+                SELECT l2 FROM Lancamento l2 WHERE l2.transacao = t AND l2.conta.tipo = 'CARTAO_CREDITO'
+          )
         ORDER BY t.data DESC, t.id DESC
     """)
-    List<Transacao> findUltimasTransacoes(Pageable pageable);
+    List<Transacao> findUltimasTransacoes(@Param("tenantId") Long tenantId, Pageable pageable);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Dashboard — próximos vencimentos até :dataLimite
@@ -82,14 +88,20 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
         SELECT DISTINCT t FROM Transacao t
         LEFT JOIN FETCH t.lancamentos l
         LEFT JOIN FETCH l.conta
-        WHERE t.status = 'PENDENTE'
-          AND t.data BETWEEN :hoje AND :dataLimite
+        WHERE t.tenantId = :tenantId
+          AND t.status = 'PENDENTE'
           AND t.deletedAt IS NULL
           AND (t.numeroParcelas IS NULL OR t.numeroParcelas <= 1)
+          AND (
+               (t.data BETWEEN :inicio AND :dataLimite)
+               OR (t.data < :hoje AND t.status = 'PENDENTE')
+          )
         ORDER BY t.data ASC
     """)
     List<Transacao> findProximosVencimentos(
+            @Param("tenantId") Long tenantId,
             @Param("hoje") LocalDate hoje,
+            @Param("inicio") LocalDate inicio,
             @Param("dataLimite") LocalDate dataLimite,
             org.springframework.data.domain.Pageable pageable);
 }

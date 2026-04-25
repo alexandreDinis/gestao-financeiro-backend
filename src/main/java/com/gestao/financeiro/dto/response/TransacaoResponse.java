@@ -23,5 +23,6 @@ public record TransacaoResponse(
         List<LancamentoLegResponse> lancamentos,
         Boolean geradoAutomaticamente,
         Long recorrenciaId,
+        BigDecimal valorPrevisto,
         LocalDateTime createdAt
 ) {}
