@@ -5,19 +5,24 @@ import com.gestao.financeiro.dto.request.CompraCartaoRequest;
 import com.gestao.financeiro.dto.response.CartaoCreditoResponse;
 import com.gestao.financeiro.dto.response.FaturaCartaoResponse;
 import com.gestao.financeiro.entity.Categoria;
-import com.gestao.financeiro.entity.Recorrencia;
+import com.gestao.financeiro.dto.request.TransacaoRecorrenteRequest;
+import com.gestao.financeiro.entity.enums.Periodicidade;
 import com.gestao.financeiro.entity.enums.StatusFatura;
-import com.gestao.financeiro.entity.enums.StatusRecorrencia;
 import com.gestao.financeiro.entity.enums.TipoCategoria;
+import com.gestao.financeiro.entity.enums.TipoTransacao;
 import com.gestao.financeiro.provider.DateProvider;
 import com.gestao.financeiro.repository.CategoriaRepository;
 import com.gestao.financeiro.repository.ContaRepository;
 import com.gestao.financeiro.repository.RecorrenciaRepository;
+import com.gestao.financeiro.entity.enums.StatusTenant;
+import com.gestao.financeiro.config.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -27,19 +32,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@Transactional
 class CartaoCreditoIntegrationTest {
 
     @Autowired
     private CartaoCreditoService cartaoCreditoService;
 
     @Autowired
-    private RecorrenciaService recorrenciaService;
+    private TransacaoRecorrenteService transacaoRecorrenteService;
 
     @Autowired
     private CategoriaRepository categoriaRepository;
-
-    @Autowired
-    private RecorrenciaRepository recorrenciaRepository;
 
     @Autowired
     private ContaRepository contaRepository;
@@ -47,12 +50,23 @@ class CartaoCreditoIntegrationTest {
     @MockBean
     private DateProvider dateProvider;
 
+    @Autowired
+    private com.gestao.financeiro.repository.TenantRepository tenantRepository;
+
+    private Long tenantId;
     private Long cartaoId;
     private Long contaId;
     private Long categoriaId;
 
     @BeforeEach
     void setup() {
+        com.gestao.financeiro.entity.Tenant tenant = new com.gestao.financeiro.entity.Tenant();
+        tenant.setNome("Test Tenant " + System.currentTimeMillis());
+        tenant.setStatus(StatusTenant.ATIVO);
+        tenantId = tenantRepository.save(tenant).getId();
+
+        TenantContext.setTenantId(tenantId);
+        
         // Criar categoria
         Categoria categoria = Categoria.builder()
                 .nome("Testes")
@@ -60,9 +74,11 @@ class CartaoCreditoIntegrationTest {
                 .icone("home")
                 .cor("#000000")
                 .build();
-        categoria.setTenantId(1L);
+        categoria.setTenantId(tenantId);
         categoria = categoriaRepository.save(categoria);
         categoriaId = categoria.getId();
+
+        when(dateProvider.now()).thenReturn(LocalDate.of(2026, 3, 2));
 
         // Criar Cartão que fecha dia 5 e vence dia 10
         CartaoCreditoRequest cartaoReq = new CartaoCreditoRequest(
@@ -73,26 +89,23 @@ class CartaoCreditoIntegrationTest {
         contaId = cartao.contaId();
     }
 
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
+    }
+
     @Test
     void deveAgruparFaturasCorretamenteAntesEDepoisDoFechamento() {
-        // 1. Data simulada: 02/03/2026 (ANTES DO FECHAMENTO: dia 5)
-        when(dateProvider.now()).thenReturn(LocalDate.of(2026, 3, 2));
 
         // Cadastrar uma recorrência (Assinatura que cobra dia 2)
-        Recorrencia rec = Recorrencia.builder()
-                .descricao("Assinatura TV")
-                .valorPrevisto(BigDecimal.valueOf(50.0))
-                .dataInicio(LocalDate.of(2026, 3, 1))
-                .diaVencimento(2)
-                .status(StatusRecorrencia.ATIVA)
-                .categoria(categoriaRepository.findById(categoriaId).orElseThrow())
-                .conta(contaRepository.findById(contaId).orElseThrow())
-                .build();
-        rec.setTenantId(1L);
-        recorrenciaRepository.save(rec);
-
+        TransacaoRecorrenteRequest recReq = new TransacaoRecorrenteRequest(
+                "Assinatura TV", BigDecimal.valueOf(50.0), TipoTransacao.DESPESA,
+                Periodicidade.MENSAL, LocalDate.of(2026, 3, 1), null, 2, categoriaId, contaId, false
+        );
+        transacaoRecorrenteService.criar(recReq);
+        
         // Processar recorrências para o dia de hoje (02/03)
-        recorrenciaService.processarRecorrenciasAgendadas();
+        transacaoRecorrenteService.processarRecorrencias();
         
         // Simular a primeira compra (Antes do fechamento) -> R$ 100
         cartaoCreditoService.comprar(new CompraCartaoRequest(

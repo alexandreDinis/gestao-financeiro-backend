@@ -34,7 +34,13 @@ public class RecorrenciaService {
     @Transactional
     public void processarRecorrenciasAgendadas() {
         log.info("Iniciando processamento de recorrências agendadas...");
-        List<Recorrencia> ativas = recorrenciaRepository.findByStatus(StatusRecorrencia.ATIVA);
+        Long tenantId = com.gestao.financeiro.config.TenantContext.getTenantId();
+        if (tenantId == null) {
+            log.warn("Tentativa de processar recorrências sem tenant no contexto.");
+            return;
+        }
+
+        List<Recorrencia> ativas = recorrenciaRepository.findByStatusAndTenantId(StatusRecorrencia.ATIVA, tenantId);
         
         LocalDate hojePelaTimezone = dateProvider.now();
         YearMonth referenciaAtual = YearMonth.from(hojePelaTimezone);

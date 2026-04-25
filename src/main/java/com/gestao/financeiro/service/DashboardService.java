@@ -7,6 +7,7 @@ import com.gestao.financeiro.entity.enums.TipoConta;
 import com.gestao.financeiro.entity.enums.TipoDivida;
 import com.gestao.financeiro.entity.enums.TipoTransacao;
 import com.gestao.financeiro.repository.*;
+import com.gestao.financeiro.entity.enums.StatusFatura;
 import com.gestao.financeiro.repository.projection.GastoCategoriaProjection;
 import com.gestao.financeiro.repository.projection.ResumoContaPeriodoProjection;
 import lombok.RequiredArgsConstructor;
@@ -58,8 +59,9 @@ public class DashboardService {
     @Transactional
     public DashboardResponse getDashboard() {
         // Garantir que as recorrências estão em dia antes de montar o dashboard
+        Long tenantId = com.gestao.financeiro.config.TenantContext.getTenantId();
         try {
-            transacaoRecorrenteService.processarRecorrencias();
+            transacaoRecorrenteService.processarRecorrencias(tenantId);
         } catch (Exception e) {
             log.error("Erro ao processar recorrências no dashboard: {}", e.getMessage());
         }
@@ -85,21 +87,46 @@ public class DashboardService {
         ResumoMes mesAtual = buildResumoMes(contas, inicioMes, fimMes);
 
         // ── 3. Gastos por categoria — busca uma vez, reutiliza em dois blocos ─
-        List<GastoCategoriaProjection> gastosCat = lancamentoRepository
+        List<GastoCategoriaProjection> gastosLancamento = lancamentoRepository
                 .somarGastosPorCategoriaPeriodo(inicioMes, fimMes);
+        List<GastoCategoriaProjection> gastosParcela = parcelaRepository
+                .somarParcelasPorCategoriaPeriodo(inicioMes, fimMes);
 
-        Map<Long, BigDecimal> gastosPorCatId = gastosCat.stream()
-                .collect(Collectors.toMap(
-                        GastoCategoriaProjection::getCategoriaId,
-                        GastoCategoriaProjection::getTotal));
+        Map<Long, BigDecimal> gastosPorCatId = new HashMap<>();
+        gastosLancamento.forEach(g -> gastosPorCatId.merge(g.getCategoriaId(), g.getTotal(), BigDecimal::add));
+        gastosParcela.forEach(g -> gastosPorCatId.merge(g.getCategoriaId(), g.getTotal(), BigDecimal::add));
+
+        // Para os top categorias, precisamos de uma lista combinada e ordenada
+        List<GastoCategoriaProjection> gastosCatCombinado = gastosPorCatId.entrySet().stream()
+                .map(entry -> {
+                    // Encontrar o nome da categoria de uma das fontes
+                    String nome = gastosLancamento.stream()
+                            .filter(g -> g.getCategoriaId().equals(entry.getKey()))
+                            .map(GastoCategoriaProjection::getNomeCategoria)
+                            .findFirst()
+                            .orElseGet(() -> gastosParcela.stream()
+                                    .filter(g -> g.getCategoriaId().equals(entry.getKey()))
+                                    .map(GastoCategoriaProjection::getNomeCategoria)
+                                    .findFirst()
+                                    .orElse("Indefinida"));
+                    
+                    GastoCategoriaProjection proj = new GastoCategoriaProjection() {
+                        @Override public Long getCategoriaId() { return entry.getKey(); }
+                        @Override public String getNomeCategoria() { return nome; }
+                        @Override public BigDecimal getTotal() { return entry.getValue(); }
+                    };
+                    return proj;
+                })
+                .sorted(Comparator.comparing(GastoCategoriaProjection::getTotal, Comparator.reverseOrder()))
+                .toList();
 
         // ── 4. Demais blocos ─────────────────────────────────────────────────
         ComparativoMes          comparativo  = buildComparativo(hoje, mesAtual);
         ProjecaoMes             projecao     = buildProjecao(hoje, fimMes, mesAtual);
-        List<GastoPorCategoria> topCat       = buildGastosPorCategoria(gastosCat, mesAtual.despesas());
+        List<GastoPorCategoria> topCat       = buildGastosPorCategoria(gastosCatCombinado, mesAtual.despesas());
         List<FluxoMensal>       fluxo        = buildFluxoCaixa(hoje);
-        List<UltimaTransacao>   ultimas      = buildUltimasTransacoes();
-        ProximosVencimentos     vencimentos  = buildProximosVencimentos(hoje);
+        List<UltimaTransacao>   ultimas      = buildUltimasTransacoes(tenantId);
+        ProximosVencimentos     vencimentos  = buildProximosVencimentos(hoje, tenantId);
         List<ResumoMeta>        metas        = buildMetas();
         List<ResumoOrcamento>   orcamentos   = buildOrcamentos(hoje, inicioMes, fimMes, gastosPorCatId);
         List<ResumoCartao>      cartoes      = buildCartoes(contas, hoje);
@@ -144,7 +171,7 @@ public class DashboardService {
         }
 
         // Cartão: somar parcelas com vencimento no período (impacto real mensal)
-        BigDecimal despesasCartao = parcelaRepository.somarParcelasPorPeriodo(inicio, fim);
+        BigDecimal despesasCartao = parcelaRepository.somarParcelasPorVencimento(inicio, fim);
         despesas = despesas.add(despesasCartao);
 
         return new ResumoMes(receitas, despesas, receitas.subtract(despesas));
@@ -161,7 +188,7 @@ public class DashboardService {
         BigDecimal recAnt  = lancamentoRepository.somarTotalCreditosPeriodo(inicioAnt, fimAnt);
         // Débitos sem cartão + parcelas do período (impacto real)
         BigDecimal despAnt = lancamentoRepository.somarTotalDebitosPeriodoSemCartao(inicioAnt, fimAnt)
-                .add(parcelaRepository.somarParcelasPorPeriodo(inicioAnt, fimAnt));
+                .add(parcelaRepository.somarParcelasPorVencimento(inicioAnt, fimAnt));
 
         return new ComparativoMes(
                 mesAtual.receitas(), recAnt,  variacaoPct(recAnt,  mesAtual.receitas()),
@@ -180,7 +207,8 @@ public class DashboardService {
 
         if (diasDecorridos == 0) {
             return new ProjecaoMes(0, diasTotais,
-                    mesAtual.receitas(), mesAtual.despesas(), mesAtual.saldo());
+                    mesAtual.receitas(), mesAtual.despesas(), mesAtual.saldo(),
+                    BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
         // Base da projeção: ALL transações do mês (PAGO + PENDENTE), exceto CANCELADO
@@ -207,7 +235,7 @@ public class DashboardService {
         }
 
         // Cartão: somar parcelas com vencimento no período (impacto real mensal)
-        BigDecimal despesasCartaoProj = parcelaRepository.somarParcelasPorPeriodo(inicioMes, fimMes);
+        BigDecimal despesasCartaoProj = parcelaRepository.somarParcelasPorVencimento(inicioMes, fimMes);
         despesasBase = despesasBase.add(despesasCartaoProj);
 
         // Adicionar recorrências que ainda NÃO geraram transação este mês
@@ -229,7 +257,7 @@ public class DashboardService {
         }
 
         // Adicionar parcelas de dívidas/empréstimos pendentes do mês (que não têm transação gerada)
-                List<ParcelaDivida> parcelasPendentes = parcelaDividaRepository.findProximasParcelas(inicioMes, fimMes, org.springframework.data.domain.PageRequest.of(0, 100));
+        List<ParcelaDivida> parcelasPendentes = parcelaDividaRepository.findProximasParcelas(hoje, inicioMes, fimMes, org.springframework.data.domain.PageRequest.of(0, 100));
 
         for (ParcelaDivida p : parcelasPendentes) {
             // Só adicionar se ainda não tem transação (senão já foi contada na base)
@@ -246,8 +274,13 @@ public class DashboardService {
         BigDecimal recProj  = receitasBase.add(fixoPendenteReceita).setScale(2, RoundingMode.HALF_UP);
         BigDecimal despProj = despesasBase.add(fixoPendenteDespesa).setScale(2, RoundingMode.HALF_UP);
 
+        // O que falta entrar/sair (Pendências)
+        // Pendência = (Total Projetado) - (Já Realizado)
+        BigDecimal recPend  = recProj.subtract(mesAtual.receitas()).max(BigDecimal.ZERO);
+        BigDecimal despPend = despProj.subtract(mesAtual.despesas()).max(BigDecimal.ZERO);
+
         return new ProjecaoMes(diasDecorridos, diasTotais,
-                recProj, despProj, recProj.subtract(despProj));
+                recProj, despProj, recProj.subtract(despProj), recPend, despPend);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -285,7 +318,7 @@ public class DashboardService {
             BigDecimal rec  = lancamentoRepository.somarTotalCreditosPeriodo(inicio, fim);
             // Débitos sem cartão + parcelas do período (impacto real)
             BigDecimal desp = lancamentoRepository.somarTotalDebitosPeriodoSemCartao(inicio, fim)
-                    .add(parcelaRepository.somarParcelasPorPeriodo(inicio, fim));
+                    .add(parcelaRepository.somarParcelasPorVencimento(inicio, fim));
             String label = capitalize(Month.of(ref.getMonthValue())
                     .getDisplayName(TextStyle.SHORT, Locale.forLanguageTag("pt-BR")));
 
@@ -299,16 +332,16 @@ public class DashboardService {
     // 6. Últimas transações
     // ─────────────────────────────────────────────────────────────────────────
 
-    private List<UltimaTransacao> buildUltimasTransacoes() {
+    private List<UltimaTransacao> buildUltimasTransacoes(Long tenantId) {
         return transacaoRepository
-                .findUltimasTransacoes(PageRequest.of(0, ULTIMAS_TRANSACOES_LIMITE))
+                .findUltimasTransacoes(tenantId, PageRequest.of(0, ULTIMAS_TRANSACOES_LIMITE))
                 .stream().map(t -> {
                     String conta = t.getLancamentos() != null && !t.getLancamentos().isEmpty()
                             ? t.getLancamentos().iterator().next().getConta().getNome() : "-";
                     String cat = t.getCategoria() != null ? t.getCategoria().getNome() : "-";
                     return new UltimaTransacao(t.getId(), t.getDescricao(), t.getValor(),
                             t.getTipo().name(), t.getStatus().name(),
-                            t.getData(), cat, conta);
+                            t.getData(), cat, conta, t.getValorPrevisto());
                 }).toList();
     }
 
@@ -316,34 +349,48 @@ public class DashboardService {
     // 7. Próximos vencimentos
     // ─────────────────────────────────────────────────────────────────────────
 
-    private ProximosVencimentos buildProximosVencimentos(LocalDate hoje) {
+    private ProximosVencimentos buildProximosVencimentos(LocalDate hoje, Long tenantId) {
         ZoneId zone = ZoneId.of("America/Sao_Paulo");
         LocalDate hojeBr = LocalDate.now(zone);
         LocalDate limite = hojeBr.plusDays(30);
 
         // 1. Buscar do repositório de transações (limitado a 50)
-        List<Transacao> transacoes = transacaoRepository.findProximosVencimentos(hojeBr, limite, PageRequest.of(0, 50));
+        List<Transacao> transacoes = transacaoRepository.findProximosVencimentos(tenantId, hojeBr, hojeBr, limite, PageRequest.of(0, 50));
 
         // 2. Buscar do repositório de parcelas de cartão (NEW - Impact Based)
-        List<Parcela> parcelasCartao = parcelaRepository.findProximasParcelas(hojeBr, limite, PageRequest.of(0, 50));
+        List<Parcela> parcelasCartao = parcelaRepository.findProximasParcelas(hojeBr, hojeBr, limite, PageRequest.of(0, 50));
 
         // 3. Buscar do repositório de parcelas de dívidas (limitado a 50)
-        List<ParcelaDivida> parcelasDivida = parcelaDividaRepository.findProximasParcelas(hojeBr, limite, PageRequest.of(0, 50));
+        List<ParcelaDivida> parcelasDivida = parcelaDividaRepository.findProximasParcelas(hojeBr, hojeBr, limite, PageRequest.of(0, 50));
 
-        if (transacoes.isEmpty() && parcelasCartao.isEmpty() && parcelasDivida.isEmpty()) {
+        // 4. Buscar faturas abertas, fechadas ou atrasadas que tenham valor > 0
+        List<FaturaCartao> faturasPendentes = faturaCartaoRepository.findByTenantIdAndStatusIn(
+                tenantId, 
+                List.of(StatusFatura.ABERTA, StatusFatura.FECHADA, StatusFatura.ATRASADA)
+        ).stream()
+        .filter(f -> f.getValorTotal().compareTo(BigDecimal.ZERO) > 0)
+        .toList();
+
+        if (transacoes.isEmpty() && parcelasCartao.isEmpty() && parcelasDivida.isEmpty() && faturasPendentes.isEmpty()) {
             return new ProximosVencimentos(List.of(), List.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
         List<Vencimento> todos = new ArrayList<>();
 
-        // Mapear transações
-        transacoes.forEach(t -> todos.add(mapTransacaoToVencimento(t, hojeBr)));
+        // Mapear transações: Ignorar as que são de Cartão de Crédito
+        transacoes.stream()
+                .filter(t -> t.getLancamentos().stream().noneMatch(l -> 
+                        l.getConta() != null && l.getConta().getTipo() == com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO))
+                .forEach(t -> todos.add(mapTransacaoToVencimento(t, hojeBr)));
 
-        // Mapear parcelas de cartão
-        parcelasCartao.forEach(p -> todos.add(mapParcelaCartaoToVencimento(p, hojeBr)));
+        // Parcelas de cartão: Ignorado aqui pois o pagamento real é na Fatura consolidada
+        // parcelasCartao.forEach(p -> todos.add(mapParcelaCartaoToVencimento(p, hojeBr)));
 
         // Mapear parcelas de dívida
         parcelasDivida.forEach(p -> todos.add(mapParcelaDividaToVencimento(p, hojeBr)));
+
+        // Mapear faturas
+        faturasPendentes.forEach(f -> todos.add(mapFaturaToVencimento(f, hojeBr)));
 
         // 3. Ordenação multinível: Atrasados -> Hoje -> Futuro
         todos.sort(Comparator.comparing(Vencimento::atrasado, Comparator.reverseOrder())
@@ -379,7 +426,8 @@ public class DashboardService {
                 com.gestao.financeiro.entity.enums.OrigemVencimento.TRANSACAO,
                 t.getTipo() == TipoTransacao.RECEITA ? com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA : com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
                 atrasado,
-                venceHoje
+                venceHoje,
+                t.getValorPrevisto()
         );
     }
 
@@ -404,7 +452,8 @@ public class DashboardService {
                 com.gestao.financeiro.entity.enums.OrigemVencimento.PARCELA,
                 com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
                 atrasado,
-                venceHoje
+                venceHoje,
+                null // Parcela de cartão não tem valorPrevisto diretamente
         );
     }
 
@@ -427,8 +476,94 @@ public class DashboardService {
                 com.gestao.financeiro.entity.enums.OrigemVencimento.PARCELA,
                 p.getDivida().getTipo() == TipoDivida.A_RECEBER ? com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA : com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
                 atrasado,
-                venceHoje
+                venceHoje,
+                null // Parcela de dívida não tem valorPrevisto
         );
+    }
+
+    private Vencimento mapFaturaToVencimento(FaturaCartao f, LocalDate hoje) {
+        String conta = "Fatura: " + f.getCartao().getConta().getNome();
+        int dias = (int) java.time.temporal.ChronoUnit.DAYS.between(hoje, f.getDataVencimento());
+        boolean atrasado = f.getDataVencimento().isBefore(hoje);
+        boolean venceHoje = f.getDataVencimento().isEqual(hoje);
+
+        return new Vencimento(
+                "FATURA-" + f.getId(),
+                null, // transacaoId
+                f.getId(),
+                "Fatura " + f.getMesReferencia() + "/" + f.getAnoReferencia() + " - " + f.getCartao().getConta().getNome(),
+                f.getValorTotal(),
+                f.getDataVencimento(),
+                dias,
+                conta,
+                com.gestao.financeiro.entity.enums.OrigemVencimento.FATURA,
+                com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
+                atrasado,
+                venceHoje,
+                null
+        );
+    }
+
+    public List<Vencimento> getTodosVencimentos(Long tenantId, Integer mes, Integer ano) {
+        ZoneId zone = ZoneId.of("America/Sao_Paulo");
+        LocalDate hojeBr = LocalDate.now(zone);
+        
+        LocalDate inicio;
+        LocalDate limite;
+
+        if (mes != null && ano != null) {
+            inicio = LocalDate.of(ano, mes, 1);
+            limite = inicio.with(java.time.temporal.TemporalAdjusters.lastDayOfMonth());
+        } else {
+            // Se não informar, pega do mês atual
+            inicio = hojeBr.with(java.time.temporal.TemporalAdjusters.firstDayOfMonth());
+            limite = hojeBr.with(java.time.temporal.TemporalAdjusters.lastDayOfMonth());
+        }
+
+        List<Transacao> transacoes = transacaoRepository.findProximosVencimentos(tenantId, hojeBr, inicio, limite, PageRequest.of(0, 500));
+        List<Parcela> parcelasCartao = parcelaRepository.findProximasParcelas(hojeBr, inicio, limite, PageRequest.of(0, 500));
+        List<ParcelaDivida> parcelasDivida = parcelaDividaRepository.findProximasParcelas(hojeBr, inicio, limite, PageRequest.of(0, 500));
+        
+        // Faturas: filtrar pelo mês/ano de referência (Incluindo ABERTAS com valor)
+        List<FaturaCartao> faturasPendentes;
+        List<StatusFatura> statusInteresse = List.of(StatusFatura.ABERTA, StatusFatura.FECHADA, StatusFatura.ATRASADA);
+
+        if (mes != null && ano != null) {
+             faturasPendentes = faturaCartaoRepository.findByTenantIdAndStatusIn(tenantId, statusInteresse)
+                .stream()
+                .filter(f -> f.getValorTotal().compareTo(BigDecimal.ZERO) > 0)
+                .filter(f -> {
+                    // Aparece se vencer no mês selecionado OU se estiver atrasada
+                    boolean noMes = f.getDataVencimento().getMonthValue() == mes && f.getDataVencimento().getYear() == ano;
+                    return noMes || f.getStatus() == StatusFatura.ATRASADA;
+                })
+                .toList();
+        } else {
+             faturasPendentes = faturaCartaoRepository.findByTenantIdAndStatusIn(tenantId, statusInteresse)
+                .stream()
+                .filter(f -> f.getValorTotal().compareTo(BigDecimal.ZERO) > 0)
+                .toList();
+        }
+
+        List<Vencimento> todos = new ArrayList<>();
+        
+        // Filtrar transações: não incluir as que são feitas no Cartão de Crédito
+        // (pois o pagamento real é feito via Fatura do Cartão)
+        transacoes.stream()
+                .filter(t -> t.getLancamentos().stream().noneMatch(l -> 
+                        l.getConta() != null && l.getConta().getTipo() == com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO))
+                .forEach(t -> todos.add(mapTransacaoToVencimento(t, hojeBr)));
+
+        // Parcelas de cartão NÃO são exibidas individualmente na Agenda de Pagamentos
+        // pois o usuário paga a Fatura consolidada.
+        // parcelasCartao.forEach(p -> todos.add(mapParcelaCartaoToVencimento(p, hojeBr)));
+
+        parcelasDivida.forEach(p -> todos.add(mapParcelaDividaToVencimento(p, hojeBr)));
+        faturasPendentes.forEach(f -> todos.add(mapFaturaToVencimento(f, hojeBr)));
+
+        todos.sort(Comparator.comparing(Vencimento::dataVencimento));
+        
+        return todos;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

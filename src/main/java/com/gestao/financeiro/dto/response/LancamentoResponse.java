@@ -25,5 +25,6 @@ public record LancamentoResponse(
         StatusTransacao status,
         Long transacaoId,
         Boolean geradoAutomaticamente,
-        com.gestao.financeiro.entity.enums.TipoDespesa tipoDespesa
+        com.gestao.financeiro.entity.enums.TipoDespesa tipoDespesa,
+        BigDecimal valorPrevisto
 ) {}

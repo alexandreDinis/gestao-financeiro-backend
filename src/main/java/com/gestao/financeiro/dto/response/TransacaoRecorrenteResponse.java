@@ -21,5 +21,6 @@ public record TransacaoRecorrenteResponse(
         String categoriaNome,
         Long contaId,
         String contaNome,
+        Boolean valorVariavel,
         LocalDateTime createdAt
 ) {}

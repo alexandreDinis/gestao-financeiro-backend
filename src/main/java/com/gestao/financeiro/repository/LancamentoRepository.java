@@ -30,6 +30,7 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
           AND l.direcao = 'CREDITO'
           AND t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND t.tipo <> 'TRANSFERENCIA'
           AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
     """)
     BigDecimal somarCreditosPorContaEPeriodo(
@@ -44,6 +45,7 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
           AND l.direcao = 'DEBITO'
           AND t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND t.tipo <> 'TRANSFERENCIA'
           AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
     """)
     BigDecimal somarDebitosPorContaEPeriodo(
@@ -67,6 +69,7 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
         WHERE t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL
           AND t.status <> 'CANCELADO'
+          AND t.tipo <> 'TRANSFERENCIA'
           AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
         GROUP BY l.conta.id, l.conta.tipo
     """)
@@ -89,6 +92,7 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
         WHERE t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL
           AND t.status <> 'CANCELADO'
+          AND t.tipo <> 'TRANSFERENCIA'
         GROUP BY l.conta.id, l.conta.tipo
     """)
     List<ResumoContaPeriodoProjection> resumoTodasContasComPendentes(
@@ -106,6 +110,7 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
           AND l.conta.tipo <> 'CARTAO_CREDITO'
           AND t.data BETWEEN :inicio AND :fim
           AND t.status = 'PAGO'
+          AND t.tipo <> 'TRANSFERENCIA'
           AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
     """)
     BigDecimal somarTotalCreditosPeriodo(
@@ -118,6 +123,7 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
         WHERE l.direcao = 'DEBITO'
           AND t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND t.tipo <> 'TRANSFERENCIA'
           AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
     """)
     BigDecimal somarTotalDebitosPeriodo(
@@ -135,6 +141,7 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
           AND l.conta.tipo <> 'CARTAO_CREDITO'
           AND t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND t.tipo <> 'TRANSFERENCIA'
           AND t.status = 'PAGO'
     """)
     BigDecimal somarTotalDebitosPeriodoSemCartao(
@@ -153,10 +160,12 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
             COALESCE(SUM(l.valor), 0) AS total
         FROM Lancamento l JOIN l.transacao t
         WHERE l.direcao = 'DEBITO'
+          AND l.conta.tipo <> 'CARTAO_CREDITO'
           AND t.categoria IS NOT NULL
           AND t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
-          AND (t.status = 'PAGO' OR (l.conta.tipo = 'CARTAO_CREDITO' AND t.status = 'PENDENTE'))
+          AND t.tipo <> 'TRANSFERENCIA'
+          AND t.status = 'PAGO'
         GROUP BY t.categoria.id, t.categoria.nome
         ORDER BY total DESC
     """)

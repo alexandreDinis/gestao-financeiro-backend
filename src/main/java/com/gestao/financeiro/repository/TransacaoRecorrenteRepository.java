@@ -14,4 +14,5 @@ public interface TransacaoRecorrenteRepository extends JpaRepository<TransacaoRe
     Page<TransacaoRecorrente> findByAtivaTrue(Pageable pageable);
 
     List<TransacaoRecorrente> findByAtivaTrue();
+    List<TransacaoRecorrente> findByAtivaTrueAndTenantId(Long tenantId);
 }

@@ -58,7 +58,12 @@ public class TransacaoController {
     }
 
     @PutMapping("/{id}/pagar")
-    public ApiResponse<TransacaoResponse> pagar(@PathVariable Long id) {
+    public ApiResponse<TransacaoResponse> pagar(
+            @PathVariable Long id,
+            @RequestBody(required = false) com.gestao.financeiro.dto.request.PagarTransacaoRequest request) {
+        if (request != null) {
+            return ApiResponse.ok(transacaoService.pagar(id, request.valor(), request.contaId(), request.dataPagamento()));
+        }
         return ApiResponse.ok(transacaoService.pagar(id));
     }
 

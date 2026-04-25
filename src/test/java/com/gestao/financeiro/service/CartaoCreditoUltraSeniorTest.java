@@ -8,6 +8,7 @@ import com.gestao.financeiro.dto.response.FaturaCartaoResponse;
 import com.gestao.financeiro.entity.Categoria;
 import com.gestao.financeiro.entity.Conta;
 import com.gestao.financeiro.entity.enums.StatusFatura;
+import com.gestao.financeiro.entity.enums.StatusTenant;
 import com.gestao.financeiro.entity.enums.TipoCategoria;
 import com.gestao.financeiro.entity.enums.TipoConta;
 import com.gestao.financeiro.exception.BusinessException;
@@ -58,13 +59,22 @@ class CartaoCreditoUltraSeniorTest {
     @MockBean
     private DateProvider dateProvider;
 
+    @Autowired
+    private com.gestao.financeiro.repository.TenantRepository tenantRepository;
+
+    private Long tenantId;
     private Long cartaoId;
     private Long contaPagadoraId;
     private Long categoriaId;
 
     @BeforeEach
     void setup() {
-        TenantContext.setTenantId(1L);
+        com.gestao.financeiro.entity.Tenant tenant = new com.gestao.financeiro.entity.Tenant();
+        tenant.setNome("Test Tenant " + System.currentTimeMillis());
+        tenant.setStatus(StatusTenant.ATIVO);
+        tenantId = tenantRepository.save(tenant).getId();
+
+        TenantContext.setTenantId(tenantId);
 
         // Simular data atual: 16/04/2026 (Usando doReturn para maior robustez)
         org.mockito.Mockito.doReturn(LocalDate.of(2026, 4, 16)).when(dateProvider).now();
@@ -76,7 +86,7 @@ class CartaoCreditoUltraSeniorTest {
                 .icone("code")
                 .cor("#FF0000")
                 .build();
-        categoria.setTenantId(1L);
+        categoria.setTenantId(tenantId);
         categoria = categoriaRepository.save(categoria);
         categoriaId = categoria.getId();
 
@@ -87,7 +97,7 @@ class CartaoCreditoUltraSeniorTest {
                 .saldoInicial(BigDecimal.valueOf(1000.0))
                 .ativa(true)
                 .build();
-        conta.setTenantId(1L);
+        conta.setTenantId(tenantId);
         conta = contaRepository.saveAndFlush(conta);
         contaPagadoraId = conta.getId();
 
@@ -97,6 +107,11 @@ class CartaoCreditoUltraSeniorTest {
         );
         var cartaoRes = cartaoCreditoService.criarCartao(cartaoReq);
         cartaoId = cartaoRes.id();
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void tearDown() {
+        TenantContext.clear();
     }
 
     @Test
