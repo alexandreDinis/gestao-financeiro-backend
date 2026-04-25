@@ -48,7 +48,9 @@ public record DashboardResponse(
             int diasTotais,
             BigDecimal receitasProjetadas,
             BigDecimal despesasProjetadas,
-            BigDecimal saldoProjetado
+            BigDecimal saldoProjetado,
+            BigDecimal receitasPendentes,
+            BigDecimal despesasPendentes
     ) {}
 
     public record GastoPorCategoria(
@@ -75,7 +77,8 @@ public record DashboardResponse(
             String status,
             LocalDate data,
             String categoria,
-            String conta
+            String conta,
+            BigDecimal valorPrevisto
     ) {}
 
     public record ProximosVencimentos(
@@ -104,7 +107,8 @@ public record DashboardResponse(
             com.gestao.financeiro.entity.enums.OrigemVencimento origem,
             com.gestao.financeiro.entity.enums.TipoMovimentacao tipo,
             boolean atrasado,
-            boolean venceHoje
+            boolean venceHoje,
+            BigDecimal valorPrevisto
     ) {}
 
     public record ResumoMeta(

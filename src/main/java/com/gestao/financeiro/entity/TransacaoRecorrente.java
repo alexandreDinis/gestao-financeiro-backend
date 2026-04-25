@@ -52,6 +52,10 @@ public class TransacaoRecorrente extends TenantEntity {
     @Builder.Default
     private Boolean ativa = true;
 
+    @Column(name = "valor_variavel", nullable = false)
+    @Builder.Default
+    private Boolean valorVariavel = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "categoria_id")
     private Categoria categoria;

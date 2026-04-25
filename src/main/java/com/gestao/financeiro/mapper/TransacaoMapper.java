@@ -44,6 +44,7 @@ public class TransacaoMapper {
                 lancamentosResp,
                 entity.getGeradoAutomaticamente(),
                 entity.getRecorrenciaId(),
+                entity.getValorPrevisto(),
                 entity.getCreatedAt()
         );
     }
@@ -79,7 +80,8 @@ public class TransacaoMapper {
                 t.getStatus(),
                 t.getId(),
                 t.getGeradoAutomaticamente(),
-                t.getTipoDespesa()
+                t.getTipoDespesa(),
+                t.getValorPrevisto()
         );
     }
 
@@ -107,7 +109,8 @@ public class TransacaoMapper {
                 p.getPaga() ? com.gestao.financeiro.entity.enums.StatusTransacao.PAGO : com.gestao.financeiro.entity.enums.StatusTransacao.PENDENTE,
                 t.getId(),
                 false, // Parcela não é gerada automaticamente no sentido de recorrência
-                null   // Parcela não tem tipo de despesa fixa/variável diretamente
+                null,  // Parcela não tem tipo de despesa fixa/variável diretamente
+                null   // Parcela não tem valor previsto
         );
     }
 }

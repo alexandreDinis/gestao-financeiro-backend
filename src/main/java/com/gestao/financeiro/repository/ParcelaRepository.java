@@ -2,6 +2,7 @@ package com.gestao.financeiro.repository;
 
 import com.gestao.financeiro.entity.Parcela;
 import com.gestao.financeiro.repository.projection.CartaoCreditoResumoProjection;
+import com.gestao.financeiro.repository.projection.GastoCategoriaProjection;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -19,8 +20,19 @@ public interface ParcelaRepository extends JpaRepository<Parcela, Long> {
 
     List<Parcela> findByFaturaId(Long faturaId);
 
-    @Query("SELECT p FROM Parcela p WHERE p.paga = false AND p.dataVencimento >= :hoje AND p.dataVencimento <= :limite")
-    List<Parcela> findProximasParcelas(@Param("hoje") LocalDate hoje, @Param("limite") LocalDate limite, Pageable pageable);
+    @Query("""
+        SELECT p FROM Parcela p 
+        WHERE p.paga = false 
+          AND (
+               (p.dataVencimento BETWEEN :inicio AND :limite)
+               OR (p.dataVencimento < :hoje)
+          )
+    """)
+    List<Parcela> findProximasParcelas(
+            @Param("hoje") LocalDate hoje, 
+            @Param("inicio") LocalDate inicio, 
+            @Param("limite") LocalDate limite, 
+            Pageable pageable);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Lançamentos — parcelas que VENCEM no período (cada parcela aparece no mês certo)
@@ -79,6 +91,23 @@ public interface ParcelaRepository extends JpaRepository<Parcela, Long> {
           AND t.status <> 'CANCELADO'
     """)
     BigDecimal somarParcelasPorVencimento(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    @Query("""
+        SELECT
+            t.categoria.id    AS categoriaId,
+            t.categoria.nome  AS nomeCategoria,
+            COALESCE(SUM(p.valorParcela), 0) AS total
+        FROM Parcela p
+        JOIN p.transacao t
+        WHERE p.dataVencimento BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL
+          AND t.status <> 'CANCELADO'
+          AND t.categoria IS NOT NULL
+        GROUP BY t.categoria.id, t.categoria.nome
+    """)
+    List<GastoCategoriaProjection> somarParcelasPorCategoriaPeriodo(
             @Param("inicio") LocalDate inicio,
             @Param("fim") LocalDate fim);
 }

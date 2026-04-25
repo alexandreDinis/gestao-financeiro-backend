@@ -10,4 +10,5 @@ import java.util.List;
 @Repository
 public interface RecorrenciaRepository extends JpaRepository<Recorrencia, Long> {
     List<Recorrencia> findByStatus(StatusRecorrencia status);
+    List<Recorrencia> findByStatusAndTenantId(StatusRecorrencia status, Long tenantId);
 }

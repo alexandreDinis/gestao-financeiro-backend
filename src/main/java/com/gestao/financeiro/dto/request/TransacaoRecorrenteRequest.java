@@ -33,5 +33,7 @@ public record TransacaoRecorrenteRequest(
         Long categoriaId,
 
         @NotNull(message = "Conta é obrigatória")
-        Long contaId
+        Long contaId,
+
+        Boolean valorVariavel
 ) {}
