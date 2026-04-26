@@ -9,5 +9,6 @@ public record ParcelaResponse(
         BigDecimal valorParcela,
         String dataVencimento,
         Boolean paga,
-        String descricaoTransacao
+        String descricaoTransacao,
+        Boolean isRecorrente
 ) {}

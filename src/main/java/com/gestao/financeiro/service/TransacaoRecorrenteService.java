@@ -3,12 +3,15 @@ package com.gestao.financeiro.service;
 import com.gestao.financeiro.dto.request.TransacaoRecorrenteRequest;
 import com.gestao.financeiro.dto.request.TransacaoRequest;
 import com.gestao.financeiro.dto.response.TransacaoRecorrenteResponse;
+import com.gestao.financeiro.dto.response.TransacaoResponse;
 import com.gestao.financeiro.entity.Categoria;
 import com.gestao.financeiro.entity.Conta;
+import com.gestao.financeiro.entity.Transacao;
 import com.gestao.financeiro.entity.TransacaoRecorrente;
 import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.TransacaoRecorrenteMapper;
+import com.gestao.financeiro.mapper.TransacaoMapper;
 import com.gestao.financeiro.repository.CategoriaRepository;
 import com.gestao.financeiro.repository.ContaRepository;
 import com.gestao.financeiro.repository.TransacaoRecorrenteRepository;
@@ -41,6 +44,7 @@ public class TransacaoRecorrenteService {
     private final TransacaoRecorrenteMapper recorrenteMapper;
     private final TransacaoService transacaoService;
     private final TransacaoRepository transacaoRepository;
+    private final TransacaoMapper transacaoMapper;
     private final DateProvider dateProvider;
 
 
@@ -143,6 +147,47 @@ public class TransacaoRecorrenteService {
     }
 
     @Transactional
+    public TransacaoResponse materializarParaPagamento(Long id, YearMonth referencia) {
+        TransacaoRecorrente rec = findById(id);
+        
+        // Verificar se já existe
+        boolean jaExiste = transacaoRepository.existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(id, referencia.toString());
+        if (jaExiste) {
+            Transacao t = transacaoRepository.findByRecorrenciaId(id).stream()
+                    .filter(tx -> referencia.equals(tx.getReferencia()))
+                    .findFirst()
+                    .orElseThrow(() -> new BusinessException("Transação já existe para esta referência"));
+            return transacaoMapper.toResponse(t);
+        }
+
+        // Determinar a data base (dia configurado no mês da referência)
+        LocalDate dataBase = referencia.atDay(Math.min(rec.getDiaVencimento() != null ? rec.getDiaVencimento() : rec.getDataInicio().getDayOfMonth(), referencia.lengthOfMonth()));
+        
+        log.info("[tenant={}] Materializando recorrência id={} para referência {}", rec.getTenantId(), id, referencia);
+        
+        TransacaoRequest request = new TransacaoRequest(
+                rec.getDescricao(),
+                rec.getValor(),
+                dataBase,
+                dataBase, // Vencimento igual à data base
+                rec.getTipo(),
+                null, 
+                rec.getCategoria() != null ? rec.getCategoria().getId() : null,
+                rec.getConta().getId(),
+                null,
+                "Materializado para pagamento antecipado da recorrência #" + id,
+                null,
+                true,
+                id,
+                referencia,
+                StatusTransacao.PENDENTE,
+                rec.getValor()
+        );
+
+        return transacaoService.criar(request);
+    }
+
+    @Transactional
     public void processarRecorrencias(Long tenantId) {
         log.info("Iniciando processamento de recorrências para tenant: {}", tenantId != null ? tenantId : "TODOS");
         LocalDate hoje = dateProvider.now();
@@ -157,7 +202,7 @@ public class TransacaoRecorrenteService {
             
             // Lógica de "Catch-up": Se não foi gerada para este mês e já passou (ou é) o dia, gera.
             YearMonth referencia = YearMonth.from(hoje);
-            boolean jaGerada = transacaoRepository.existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(rec.getId(), referencia);
+            boolean jaGerada = transacaoRepository.existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(rec.getId(), referencia.toString());
             
             if (!jaGerada && deveGerarParaReferencia(rec, hoje)) {
                 try {

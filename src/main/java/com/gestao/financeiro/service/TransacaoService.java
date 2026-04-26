@@ -13,9 +13,12 @@ import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.TransacaoMapper;
 import com.gestao.financeiro.repository.ContaRepository;
 import com.gestao.financeiro.repository.CategoriaRepository;
+import com.gestao.financeiro.repository.TransacaoRecorrenteRepository;
 import com.gestao.financeiro.repository.TransacaoRepository;
 import com.gestao.financeiro.repository.ParcelaRepository;
 import com.gestao.financeiro.config.TenantContext;
+import com.gestao.financeiro.entity.enums.OrigemLancamento;
+import java.time.YearMonth;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -43,6 +46,7 @@ public class TransacaoService {
     private final CategoriaRepository categoriaRepository;
     private final TransacaoRepository transacaoRepository;
     private final ParcelaRepository parcelaRepository;
+    private final TransacaoRecorrenteRepository transacaoRecorrenteRepository;
     private final TransacaoMapper transacaoMapper;
     private final CartaoCreditoService cartaoCreditoService;
 
@@ -79,6 +83,62 @@ public class TransacaoService {
             );
         }
 
+        // 3. Projected Recurring Transactions (Assinaturas)
+        // We project occurrences for the filtered period that haven't been materialized yet.
+        List<LancamentoResponse> projecoes = new ArrayList<>();
+        if (geradoAutomaticamente == null || geradoAutomaticamente) {
+            LocalDate filterInicio = dataInicio != null ? dataInicio : LocalDate.now().withDayOfMonth(1);
+            LocalDate filterFim = dataFim != null ? dataFim : LocalDate.now().plusMonths(3).withDayOfMonth(1).minusDays(1);
+            
+            YearMonth startMonth = YearMonth.from(filterInicio);
+            YearMonth endMonth = YearMonth.from(filterFim);
+            
+            List<TransacaoRecorrente> recurrences = transacaoRecorrenteRepository.findByAtivaTrueAndTenantId(tenantId);
+            
+            for (TransacaoRecorrente rec : recurrences) {
+                // Apply basic filters
+                if (tipo != null && rec.getTipo() != tipo) continue;
+                if (categoriaId != null && (rec.getCategoria() == null || !rec.getCategoria().getId().equals(categoriaId))) continue;
+                if (busca != null && !rec.getDescricao().toLowerCase().contains(busca.toLowerCase())) continue;
+                
+                // Iterate through months in range
+                YearMonth current = startMonth;
+                while (!current.isAfter(endMonth)) {
+                    LocalDate occurrenceDate = current.atDay(Math.min(rec.getDiaVencimento() != null ? rec.getDiaVencimento() : rec.getDataInicio().getDayOfMonth(), current.lengthOfMonth()));
+                    
+                    if (rec.isAtivaEm(occurrenceDate)) {
+                        // Check if already materialized
+                        boolean exists = transacaoRepository.existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(rec.getId(), current.toString());
+                        if (!exists) {
+                            projecoes.add(new LancamentoResponse(
+                                null, // Virtual
+                                rec.getDescricao() + " (Previsto)",
+                                rec.getValor(),
+                                occurrenceDate,
+                                rec.getTipo(),
+                                null, null,
+                                OrigemLancamento.RECORRENCIA_PROJETADA,
+                                rec.getCategoria() != null ? rec.getCategoria().getNome() : null,
+                                rec.getCategoria() != null ? rec.getCategoria().getId() : null,
+                                rec.getConta() != null ? rec.getConta().getNome() : null,
+                                rec.getConta() != null ? rec.getConta().getId() : null,
+                                null,
+                                StatusTransacao.PENDENTE,
+                                null,
+                                true,
+                                null,
+                                rec.getValor(),
+                                null,
+                                occurrenceDate,
+                                rec.getId()
+                            ));
+                        }
+                    }
+                    current = current.plusMonths(1);
+                }
+            }
+        }
+
         // 3. Map to Ledger Response
         Stream<LancamentoResponse> standardStream = transacoesPage.getContent().stream()
                 .map(transacaoMapper::toLedgerResponse);
@@ -102,7 +162,10 @@ public class TransacaoService {
                 .map(transacaoMapper::toLedgerResponse);
 
         // 4. Merge, Sort by dataReferencia (Impact Date) and Paginate in memory
-        List<LancamentoResponse> combined = Stream.concat(standardStream, installmentStream)
+        List<LancamentoResponse> combined = Stream.concat(
+                    Stream.concat(standardStream, installmentStream),
+                    projecoes.stream()
+                )
                 .sorted(Comparator.comparing(LancamentoResponse::dataReferencia))
                 .toList();
         
@@ -115,7 +178,7 @@ public class TransacaoService {
             paginatedList = combined.subList(start, end);
         }
 
-        return new PageImpl<>(paginatedList, pageable, transacoesPage.getTotalElements() + parcelas.size());
+        return new PageImpl<>(paginatedList, pageable, combined.size());
     }
 
     public TransacaoResponse buscarPorId(Long id) {
@@ -272,6 +335,7 @@ public class TransacaoService {
         transacao.setDescricao(request.descricao());
         transacao.setValor(request.valor());
         transacao.setData(request.data());
+        transacao.setDataVencimento(request.dataVencimento());
         transacao.setObservacao(request.observacao());
         
         // Atualiza categoria se fornecida

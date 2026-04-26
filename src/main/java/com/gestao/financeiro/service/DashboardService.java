@@ -44,6 +44,7 @@ public class DashboardService {
     private final TransacaoRepository       transacaoRepository;
     private final MetaFinanceiraRepository  metaRepository;
     private final OrcamentoRepository       orcamentoRepository;
+    private final CategoriaRepository       categoriaRepository;
     private final CartaoCreditoRepository   cartaoCreditoRepository;
     private final FaturaCartaoRepository    faturaCartaoRepository;
     private final AlertaScoreCalculator     alertaCalculator;
@@ -371,11 +372,15 @@ public class DashboardService {
         .filter(f -> f.getValorTotal().compareTo(BigDecimal.ZERO) > 0)
         .toList();
 
-        if (transacoes.isEmpty() && parcelasCartao.isEmpty() && parcelasDivida.isEmpty() && faturasPendentes.isEmpty()) {
+        // 5. Buscar projeções de recorrências (NEW - Impact Based)
+        List<Vencimento> projecoes = projectRecurrences(tenantId, hojeBr, limite, hojeBr);
+
+        if (transacoes.isEmpty() && parcelasCartao.isEmpty() && parcelasDivida.isEmpty() && faturasPendentes.isEmpty() && projecoes.isEmpty()) {
             return new ProximosVencimentos(List.of(), List.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
         List<Vencimento> todos = new ArrayList<>();
+        todos.addAll(projecoes);
 
         // Mapear transações: Ignorar as que são de Cartão de Crédito
         transacoes.stream()
@@ -524,6 +529,9 @@ public class DashboardService {
         List<Parcela> parcelasCartao = parcelaRepository.findProximasParcelas(hojeBr, inicio, limite, PageRequest.of(0, 500));
         List<ParcelaDivida> parcelasDivida = parcelaDividaRepository.findProximasParcelas(hojeBr, inicio, limite, PageRequest.of(0, 500));
         
+        // 4. Buscar projeções de recorrências (NEW)
+        List<Vencimento> projecoes = projectRecurrences(tenantId, inicio, limite, hojeBr);
+
         // Faturas: filtrar pelo mês/ano de referência (Incluindo ABERTAS com valor)
         List<FaturaCartao> faturasPendentes;
         List<StatusFatura> statusInteresse = List.of(StatusFatura.ABERTA, StatusFatura.FECHADA, StatusFatura.ATRASADA);
@@ -560,6 +568,8 @@ public class DashboardService {
 
         parcelasDivida.forEach(p -> todos.add(mapParcelaDividaToVencimento(p, hojeBr)));
         faturasPendentes.forEach(f -> todos.add(mapFaturaToVencimento(f, hojeBr)));
+        
+        todos.addAll(projecoes);
 
         todos.sort(Comparator.comparing(Vencimento::dataVencimento));
         
@@ -594,20 +604,42 @@ public class DashboardService {
         return orcamentoRepository
                 .findByMesAndAnoWithCategoria(hoje.getMonthValue(), hoje.getYear())
                 .stream().map(o -> {
-                    BigDecimal limite  = nvl(o.getLimite());
-                    BigDecimal gasto   = gastosPorCatId.getOrDefault(
-                            o.getCategoria().getId(), BigDecimal.ZERO);
-                    BigDecimal dispon  = limite.subtract(gasto);
+                    Long catId = o.getCategoria().getId();
+                    
+                    // Buscar subcategorias (filhas)
+                    List<Categoria> subcategorias = categoriaRepository.findByCategoriaPaiId(catId);
+                    
+                    // Calcula gasto da categoria pai
+                    BigDecimal gastoPai = gastosPorCatId.getOrDefault(catId, BigDecimal.ZERO);
+                    
+                    // Calcula gasto das filhas e monta breakdown
+                    BigDecimal gastoFilhasTotal = BigDecimal.ZERO;
+                    List<ResumoOrcamento.SubcategoriaGasto> breakdown = new java.util.ArrayList<>();
+                    
+                    for (Categoria subcat : subcategorias) {
+                        BigDecimal gastoSub = gastosPorCatId.getOrDefault(subcat.getId(), BigDecimal.ZERO);
+                        if (gastoSub.compareTo(BigDecimal.ZERO) > 0) {
+                            gastoFilhasTotal = gastoFilhasTotal.add(gastoSub);
+                            breakdown.add(new ResumoOrcamento.SubcategoriaGasto(
+                                    subcat.getNome(), gastoSub
+                            ));
+                        }
+                    }
+
+                    BigDecimal limite = nvl(o.getLimite());
+                    BigDecimal gastoTotal = gastoPai.add(gastoFilhasTotal);
+                    BigDecimal dispon = limite.subtract(gastoTotal);
 
                     double pct = limite.compareTo(BigDecimal.ZERO) > 0
-                            ? gasto.divide(limite, 4, RoundingMode.HALF_UP)
+                            ? gastoTotal.divide(limite, 4, RoundingMode.HALF_UP)
                                      .multiply(BigDecimal.valueOf(100)).doubleValue()
                             : 0.0;
 
                     return new ResumoOrcamento(
                             o.getId(), o.getCategoria().getNome(),
-                            limite, gasto, dispon, round2(pct),
-                            gasto.compareTo(limite) > 0
+                            limite, gastoTotal, dispon, round2(pct),
+                            gastoTotal.compareTo(limite) > 0,
+                            breakdown.isEmpty() ? null : breakdown
                     );
                 }).toList();
     }
@@ -692,6 +724,55 @@ public class DashboardService {
                 .divide(anterior, 4, RoundingMode.HALF_UP)
                 .multiply(BigDecimal.valueOf(100))
                 .doubleValue();
+    }
+
+    private List<Vencimento> projectRecurrences(Long tenantId, LocalDate inicio, LocalDate limite, LocalDate hoje) {
+        List<Vencimento> projecoes = new ArrayList<>();
+        YearMonth startMonth = YearMonth.from(inicio);
+        YearMonth endMonth = YearMonth.from(limite);
+        
+        List<TransacaoRecorrente> recurrences = transacaoRecorrenteRepository.findByAtivaTrueAndTenantId(tenantId);
+        log.info("[DEBUG] projectRecurrences: tenantId={}, startMonth={}, endMonth={}, found {} recurrences", tenantId, startMonth, endMonth, recurrences.size());
+        
+        for (TransacaoRecorrente rec : recurrences) {
+            YearMonth current = startMonth;
+            while (!current.isAfter(endMonth)) {
+                LocalDate occurrenceDate = current.atDay(Math.min(rec.getDiaVencimento() != null ? rec.getDiaVencimento() : rec.getDataInicio().getDayOfMonth(), current.lengthOfMonth()));
+                
+                // Only project if it's within the requested period [inicio, limite]
+                boolean inPeriod = !occurrenceDate.isBefore(inicio) && !occurrenceDate.isAfter(limite);
+                boolean active = rec.isAtivaEm(occurrenceDate);
+                log.info("[DEBUG] Checking occurrence: rec={}, date={}, inPeriod={}, active={}", rec.getDescricao(), occurrenceDate, inPeriod, active);
+
+                if (inPeriod && active) {
+                    // Check if already materialized
+                    boolean exists = transacaoRepository.existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(rec.getId(), current.toString());
+                    if (!exists) {
+                        int dias = (int) java.time.temporal.ChronoUnit.DAYS.between(hoje, occurrenceDate);
+                        boolean atrasado = occurrenceDate.isBefore(hoje);
+                        boolean venceHoje = occurrenceDate.isEqual(hoje);
+
+                        projecoes.add(new Vencimento(
+                            "RECORRENCIA-PROJ-" + rec.getId() + "-" + current,
+                            null, // transacaoId
+                            null, // parcelaId
+                            rec.getDescricao() + " (Previsto)",
+                            rec.getValor(),
+                            occurrenceDate,
+                            dias,
+                            rec.getConta() != null ? rec.getConta().getNome() : "Assinatura",
+                            com.gestao.financeiro.entity.enums.OrigemVencimento.RECORRENCIA,
+                            rec.getTipo() == TipoTransacao.RECEITA ? com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA : com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
+                            atrasado,
+                            venceHoje,
+                            rec.getValor()
+                        ));
+                    }
+                }
+                current = current.plusMonths(1);
+            }
+        }
+        return projecoes;
     }
 
     private BigDecimal nvl(BigDecimal v) { return v != null ? v : BigDecimal.ZERO; }
