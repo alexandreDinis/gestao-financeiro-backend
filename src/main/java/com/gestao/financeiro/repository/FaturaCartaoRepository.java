@@ -31,5 +31,13 @@ public interface FaturaCartaoRepository extends JpaRepository<FaturaCartao, Long
 
     List<FaturaCartao> findByCartaoIdAndStatusIn(Long cartaoId, List<StatusFatura> statuses);
 
-    List<FaturaCartao> findByTenantIdAndStatusIn(Long tenantId, List<StatusFatura> statuses);
+    @Query("""
+        SELECT DISTINCT f FROM FaturaCartao f
+        LEFT JOIN FETCH f.parcelas p
+        LEFT JOIN FETCH p.transacao
+        LEFT JOIN FETCH f.cartao c
+        LEFT JOIN FETCH c.conta
+        WHERE f.tenantId = :tenantId AND f.status IN :statuses
+    """)
+    List<FaturaCartao> findByTenantIdAndStatusIn(@Param("tenantId") Long tenantId, @Param("statuses") List<StatusFatura> statuses);
 }

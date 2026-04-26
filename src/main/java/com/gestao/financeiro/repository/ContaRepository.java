@@ -25,6 +25,8 @@ public interface ContaRepository extends JpaRepository<Conta, Long> {
 
     Page<Conta> findByAtivaTrue(Pageable pageable);
 
+    java.util.List<Conta> findByTenantIdAndTipo(Long tenantId, com.gestao.financeiro.entity.enums.TipoConta tipo);
+
     long countByTenantId(Long tenantId);
 
     boolean existsByNomeAndTenantId(String nome, Long tenantId);

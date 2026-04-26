@@ -99,6 +99,7 @@ public record DashboardResponse(
             String idUnico,
             Long transacaoId,
             Long parcelaId,
+            Long contaId,
             String descricao,
             BigDecimal valor,
             LocalDate dataVencimento,
