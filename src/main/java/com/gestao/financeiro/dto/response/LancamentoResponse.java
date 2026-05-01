@@ -21,10 +21,16 @@ public record LancamentoResponse(
         Integer totalParcelas,
         OrigemLancamento origem,
         String categoria,
+        Long categoriaId,
         String conta,
+        Long contaId,
+        Long contaDestinoId,
         StatusTransacao status,
         Long transacaoId,
         Boolean geradoAutomaticamente,
         com.gestao.financeiro.entity.enums.TipoDespesa tipoDespesa,
-        BigDecimal valorPrevisto
+        BigDecimal valorPrevisto,
+        String observacao,
+        LocalDate dataVencimento,
+        Long recorrenciaId
 ) {}

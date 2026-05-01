@@ -65,7 +65,10 @@ public class TransacaoMapper {
      */
     public LancamentoResponse toLedgerResponse(Transacao t) {
         String contaNome = t.getLancamentos().isEmpty() ? "Conta Padrão" : t.getLancamentos().get(0).getConta().getNome();
-        
+        Long contaId = t.getLancamentos().isEmpty() ? null : t.getLancamentos().get(0).getConta().getId();
+        Long contaDestinoId = (t.getTipo() == TipoTransacao.TRANSFERENCIA && t.getLancamentos().size() > 1) 
+                              ? t.getLancamentos().get(1).getConta().getId() : null;
+
         return new LancamentoResponse(
                 t.getId(),
                 t.getDescricao(),
@@ -76,18 +79,21 @@ public class TransacaoMapper {
                 null,
                 OrigemLancamento.TRANSACAO,
                 t.getCategoria() != null ? t.getCategoria().getNome() : null,
+                t.getCategoria() != null ? t.getCategoria().getId() : null,
                 contaNome,
+                contaId,
+                contaDestinoId,
                 t.getStatus(),
                 t.getId(),
                 t.getGeradoAutomaticamente(),
                 t.getTipoDespesa(),
-                t.getValorPrevisto()
+                t.getValorPrevisto(),
+                t.getObservacao(),
+                t.getDataVencimento(),
+                t.getRecorrenciaId()
         );
     }
 
-    /**
-     * Mapeamento Unificado: Parcela -> LancamentoResponse (Ledger)
-     */
     public LancamentoResponse toLedgerResponse(Parcela p) {
         Transacao t = p.getTransacao();
         
@@ -95,6 +101,9 @@ public class TransacaoMapper {
         String descricaoFormatada = String.format("%s (%d/%d)", 
                 t.getDescricao(), p.getNumeroParcela(), p.getTotalParcelas());
         
+        String contaNome = t.getLancamentos().isEmpty() ? "Cartão de Crédito" : t.getLancamentos().get(0).getConta().getNome();
+        Long contaId = t.getLancamentos().isEmpty() ? null : t.getLancamentos().get(0).getConta().getId();
+
         return new LancamentoResponse(
                 p.getId(),
                 descricaoFormatada,
@@ -105,12 +114,18 @@ public class TransacaoMapper {
                 p.getTotalParcelas(),
                 OrigemLancamento.PARCELA,
                 t.getCategoria() != null ? t.getCategoria().getNome() : null,
-                t.getLancamentos().isEmpty() ? "Cartão de Crédito" : t.getLancamentos().get(0).getConta().getNome(),
+                t.getCategoria() != null ? t.getCategoria().getId() : null,
+                contaNome,
+                contaId,
+                null,
                 p.getPaga() ? com.gestao.financeiro.entity.enums.StatusTransacao.PAGO : com.gestao.financeiro.entity.enums.StatusTransacao.PENDENTE,
                 t.getId(),
                 false, // Parcela não é gerada automaticamente no sentido de recorrência
                 null,  // Parcela não tem tipo de despesa fixa/variável diretamente
-                null   // Parcela não tem valor previsto
+                null,  // Parcela não tem valor previsto
+                t.getObservacao(),
+                p.getDataVencimento(),
+                t.getRecorrenciaId()
         );
     }
 }

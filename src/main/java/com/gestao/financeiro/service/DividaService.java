@@ -470,6 +470,11 @@ public class DividaService {
                 continue;
             }
 
+            // Verificar se a recorrência ainda não começou
+            if (mesAtual.isBefore(YearMonth.from(divida.getDataInicio()))) {
+                continue;
+            }
+
             // Verificar se já existe parcela para este mês
             int dia = divida.getDiaVencimento() != null
                     ? Math.min(divida.getDiaVencimento(), mesAtual.lengthOfMonth())

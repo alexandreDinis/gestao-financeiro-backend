@@ -8,5 +8,6 @@ public enum OrigemLancamento {
     PARCELA,
     AJUSTE,
     ESTORNO,
-    JUROS
+    JUROS,
+    RECORRENCIA_PROJETADA
 }

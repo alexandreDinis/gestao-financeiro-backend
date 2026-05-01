@@ -620,7 +620,7 @@ public class CartaoCreditoService {
                 parcelasRes.add(new ParcelaResponse(
                     p.getId(), p.getNumeroParcela(), p.getTotalParcelas(),
                     p.getValorParcela(), p.getDataVencimento().toString(), p.getPaga(),
-                    descricao));
+                    descricao, p.getTransacao().getRecorrenciaId() != null));
             }
         }
 
