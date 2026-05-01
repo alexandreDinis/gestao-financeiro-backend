@@ -45,4 +45,11 @@ public class TransacaoRecorrenteController {
     public void deletar(@PathVariable Long id) {
         recorrenteService.deletar(id);
     }
+
+    @PostMapping("/{id}/materializar")
+    public ApiResponse<Object> materializar(
+            @PathVariable Long id,
+            @RequestParam String referencia) {
+        return ApiResponse.ok(recorrenteService.materializarParaPagamento(id, java.time.YearMonth.parse(referencia)));
+    }
 }

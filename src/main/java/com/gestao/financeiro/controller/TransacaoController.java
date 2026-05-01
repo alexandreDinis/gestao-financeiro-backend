@@ -57,6 +57,11 @@ public class TransacaoController {
         return ApiResponse.created(transacaoService.criar(request));
     }
 
+    @PutMapping("/{id}")
+    public ApiResponse<TransacaoResponse> atualizar(@PathVariable Long id, @Valid @RequestBody TransacaoRequest request) {
+        return ApiResponse.ok(transacaoService.atualizar(id, request));
+    }
+
     @PutMapping("/{id}/pagar")
     public ApiResponse<TransacaoResponse> pagar(
             @PathVariable Long id,

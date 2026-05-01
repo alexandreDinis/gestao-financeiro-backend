@@ -25,8 +25,8 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
 
     boolean existsByRecorrenciaIdAndReferencia(Long recorrenciaId, YearMonth referencia);
     
-    @Query("SELECT COUNT(t) > 0 FROM Transacao t WHERE t.recorrenciaId = :recorrenciaId AND t.referencia = :referencia")
-    boolean existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(@Param("recorrenciaId") Long recorrenciaId, @Param("referencia") YearMonth referencia);
+    @Query(value = "SELECT COUNT(*) > 0 FROM transacao WHERE recorrencia_id = :recorrenciaId AND referencia = :referencia", nativeQuery = true)
+    boolean existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(@Param("recorrenciaId") Long recorrenciaId, @Param("referencia") String referencia);
 
     @Query("""
         SELECT t FROM Transacao t

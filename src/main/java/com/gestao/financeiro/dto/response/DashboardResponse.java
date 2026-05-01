@@ -99,6 +99,7 @@ public record DashboardResponse(
             String idUnico,
             Long transacaoId,
             Long parcelaId,
+            Long contaId,
             String descricao,
             BigDecimal valor,
             LocalDate dataVencimento,
@@ -128,8 +129,11 @@ public record DashboardResponse(
             BigDecimal gasto,
             BigDecimal disponivel,
             Double percentualUtilizado,
-            boolean estourado
-    ) {}
+            boolean estourado,
+            List<SubcategoriaGasto> subcategorias
+    ) {
+        public record SubcategoriaGasto(String nome, BigDecimal gasto) {}
+    }
 
     public record ResumoCartao(
             Long cartaoId,
