@@ -599,6 +599,7 @@ public class CartaoCreditoService {
                 c.getBandeira(), limiteTotal, utilizado, disponivel,
                 valorFaturaAtual, resumo.getValorFechadas(), utilizado,
                 melhorDia, diasParaFechar, vencimentoAtual,
+                c.getDiaFechamento(), c.getDiaVencimento(),
                 c.getCreatedAt());
     }
 
