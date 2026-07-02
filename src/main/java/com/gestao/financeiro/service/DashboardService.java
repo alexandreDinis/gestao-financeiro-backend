@@ -123,7 +123,7 @@ public class DashboardService {
 
         // ── 4. Demais blocos ─────────────────────────────────────────────────
         ComparativoMes          comparativo  = buildComparativo(hoje, mesAtual);
-        ProjecaoMes             projecao     = buildProjecao(hoje, fimMes, mesAtual);
+        ProjecaoMes             projecao     = buildProjecao(hoje, fimMes, mesAtual, saldoTotal);
         List<GastoPorCategoria> topCat       = buildGastosPorCategoria(gastosCatCombinado, mesAtual.despesas());
         List<FluxoMensal>       fluxo        = buildFluxoCaixa(hoje);
         List<UltimaTransacao>   ultimas      = buildUltimasTransacoes(tenantId);
@@ -164,16 +164,17 @@ public class DashboardService {
         for (ResumoContaPeriodoProjection r : resumos) {
             boolean isCartao = idsCartao.contains(r.getContaId());
             if (isCartao) {
-                // SKIP — cartão de crédito usa Parcela como fonte de verdade
+                // SKIP — cartão de crédito: parcelas são obrigações futuras (contas a pagar),
+                // não saídas reais. Quando a fatura é paga, o débito na conta bancária
+                // já é capturado como transação PAGA.
             } else {
                 receitas = receitas.add(r.getTotalCreditos());
                 despesas = despesas.add(r.getTotalDebitos());
             }
         }
 
-        // Cartão: somar parcelas com vencimento no período (impacto real mensal)
-        BigDecimal despesasCartao = parcelaRepository.somarParcelasPorVencimento(inicio, fim);
-        despesas = despesas.add(despesasCartao);
+        // Despesas = apenas transações PAGAS em contas não-cartão (saídas reais do mês)
+        // Parcelas de cartão NÃO são incluídas aqui — elas aparecem em "Contas a Pagar"
 
         return new ResumoMes(receitas, despesas, receitas.subtract(despesas));
     }
@@ -201,87 +202,47 @@ public class DashboardService {
     // 3. Projeção linear do mês
     // ─────────────────────────────────────────────────────────────────────────
 
-    private ProjecaoMes buildProjecao(LocalDate hoje, LocalDate fimMes, ResumoMes mesAtual) {
+    private ProjecaoMes buildProjecao(LocalDate hoje, LocalDate fimMes, ResumoMes mesAtual, BigDecimal saldoConsolidado) {
         int diasDecorridos = hoje.getDayOfMonth();
         int diasTotais     = fimMes.getDayOfMonth();
-        LocalDate inicioMes = hoje.with(TemporalAdjusters.firstDayOfMonth());
 
         if (diasDecorridos == 0) {
             return new ProjecaoMes(0, diasTotais,
-                    mesAtual.receitas(), mesAtual.despesas(), mesAtual.saldo(),
+                    mesAtual.receitas(), mesAtual.despesas(), saldoConsolidado,
                     BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
-        // Base da projeção: ALL transações do mês (PAGO + PENDENTE), exceto CANCELADO
-        List<ResumoContaPeriodoProjection> resumosComPendentes =
-                lancamentoRepository.resumoTodasContasComPendentes(inicioMes, fimMes);
+        // ── Pendências: usar a mesma fonte de dados da tela "Contas a Pagar" ──
+        // Busca TODOS os vencimentos do mês (mesma lógica de getTodosVencimentos)
+        // e soma por tipo (DESPESA / RECEITA) para mostrar o total real pendente
+        Long tenantId = com.gestao.financeiro.config.TenantContext.getTenantId();
+        List<Vencimento> vencimentosMes = getTodosVencimentos(tenantId, hoje.getMonthValue(), hoje.getYear());
 
-        Set<Long> idsCartao = contaRepository.findByAtivaTrue(Pageable.unpaged()).getContent()
-                .stream()
-                .filter(c -> c.getTipo() == TipoConta.CARTAO_CREDITO)
-                .map(Conta::getId)
-                .collect(Collectors.toSet());
+        BigDecimal despPend = vencimentosMes.stream()
+                .filter(v -> v.tipo() == com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA)
+                .map(Vencimento::valor)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
 
-        BigDecimal receitasBase = BigDecimal.ZERO;
-        BigDecimal despesasBase = BigDecimal.ZERO;
+        BigDecimal recPend = vencimentosMes.stream()
+                .filter(v -> v.tipo() == com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA)
+                .map(Vencimento::valor)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
 
-        for (ResumoContaPeriodoProjection r : resumosComPendentes) {
-            boolean isCartao = idsCartao.contains(r.getContaId());
-            if (isCartao) {
-                // SKIP — cartão de crédito usa Parcela como fonte de verdade
-            } else {
-                receitasBase = receitasBase.add(r.getTotalCreditos());
-                despesasBase = despesasBase.add(r.getTotalDebitos());
-            }
-        }
+        // Saldo projetado = Saldo atual + o que vai entrar - o que vai sair
+        // (representa o saldo real previsto para o final do mês)
+        BigDecimal saldoProjetado = saldoConsolidado
+                .add(recPend)
+                .subtract(despPend)
+                .setScale(2, RoundingMode.HALF_UP);
 
-        // Cartão: somar parcelas com vencimento no período (impacto real mensal)
-        BigDecimal despesasCartaoProj = parcelaRepository.somarParcelasPorVencimento(inicioMes, fimMes);
-        despesasBase = despesasBase.add(despesasCartaoProj);
-
-        // Adicionar recorrências que ainda NÃO geraram transação este mês
-        BigDecimal fixoPendenteReceita = BigDecimal.ZERO;
-        BigDecimal fixoPendenteDespesa = BigDecimal.ZERO;
-
-        YearMonth referencia = YearMonth.from(hoje);
-        List<TransacaoRecorrente> recorrentes = transacaoRecorrenteRepository.findByAtivaTrue();
-
-        for (TransacaoRecorrente rec : recorrentes) {
-            boolean jaGerada = transacaoRepository.existsByRecorrenciaIdAndReferencia(rec.getId(), referencia);
-            if (!jaGerada && rec.isAtivaEm(hoje)) {
-                if (rec.getTipo() == TipoTransacao.RECEITA) {
-                    fixoPendenteReceita = fixoPendenteReceita.add(rec.getValor());
-                } else if (rec.getTipo() == TipoTransacao.DESPESA) {
-                    fixoPendenteDespesa = fixoPendenteDespesa.add(rec.getValor());
-                }
-            }
-        }
-
-        // Adicionar parcelas de dívidas/empréstimos pendentes do mês (que não têm transação gerada)
-        List<ParcelaDivida> parcelasPendentes = parcelaDividaRepository.findProximasParcelas(hoje, inicioMes, fimMes, org.springframework.data.domain.PageRequest.of(0, 100));
-
-        for (ParcelaDivida p : parcelasPendentes) {
-            // Só adicionar se ainda não tem transação (senão já foi contada na base)
-            if (p.getTransacaoGerada() == null) {
-                if (p.getDivida().getTipo() == TipoDivida.A_RECEBER) {
-                    fixoPendenteReceita = fixoPendenteReceita.add(p.getValor());
-                } else if (p.getDivida().getTipo() == TipoDivida.A_PAGAR) {
-                    fixoPendenteDespesa = fixoPendenteDespesa.add(p.getValor());
-                }
-            }
-        }
-
-        // Projeção: base (PAGO + PENDENTE já registradas) + itens que ainda vão ser gerados
-        BigDecimal recProj  = receitasBase.add(fixoPendenteReceita).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal despProj = despesasBase.add(fixoPendenteDespesa).setScale(2, RoundingMode.HALF_UP);
-
-        // O que falta entrar/sair (Pendências)
-        // Pendência = (Total Projetado) - (Já Realizado)
-        BigDecimal recPend  = recProj.subtract(mesAtual.receitas()).max(BigDecimal.ZERO);
-        BigDecimal despPend = despProj.subtract(mesAtual.despesas()).max(BigDecimal.ZERO);
+        // Projeções de receita e despesa totais do mês (realizadas + pendentes)
+        BigDecimal recProj  = mesAtual.receitas().add(recPend).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal despProj = mesAtual.despesas().add(despPend).setScale(2, RoundingMode.HALF_UP);
 
         return new ProjecaoMes(diasDecorridos, diasTotais,
-                recProj, despProj, recProj.subtract(despProj), recPend, despPend);
+                recProj, despProj, saldoProjetado, recPend, despPend);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

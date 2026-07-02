@@ -563,6 +563,25 @@ public class CartaoCreditoService {
         // 2. Cálculo de ciclo atual para "Valor da Fatura Aberta"
         LocalDate vencimentoAtual = calcularDataVencimentoFatura(hoje, c.getDiaFechamento(), c.getDiaVencimento());
         
+        // Obter valor REAL da fatura do mês (não todas as faturas em aberto futuras)
+        BigDecimal valorFaturaAtual = faturaRepository
+                .findByCartaoIdAndMesReferenciaAndAnoReferencia(c.getId(), vencimentoAtual.getMonthValue(), vencimentoAtual.getYear())
+                .map(f -> {
+                    BigDecimal total = BigDecimal.ZERO;
+                    for (Parcela p : f.getParcelas()) {
+                        try {
+                            Transacao t = p.getTransacao();
+                            if (t != null && t.getDeletedAt() == null && t.getStatus() != StatusTransacao.CANCELADO && !p.getPaga()) {
+                                total = total.add(p.getValorParcela());
+                            }
+                        } catch (EntityNotFoundException e) {
+                            // ignora
+                        }
+                    }
+                    return total;
+                })
+                .orElse(BigDecimal.ZERO);
+
         // 3. Melhor dia para compra (Dia seguinte ao fechamento)
         int melhorDia = c.getDiaFechamento() + 1;
         if (melhorDia > hoje.lengthOfMonth()) melhorDia = 1;
@@ -578,8 +597,9 @@ public class CartaoCreditoService {
         return new CartaoCreditoResponse(
                 c.getId(), c.getConta().getId(), c.getConta().getNome(),
                 c.getBandeira(), limiteTotal, utilizado, disponivel,
-                resumo.getValorAberta(), resumo.getValorFechadas(), utilizado,
+                valorFaturaAtual, resumo.getValorFechadas(), utilizado,
                 melhorDia, diasParaFechar, vencimentoAtual,
+                c.getDiaFechamento(), c.getDiaVencimento(),
                 c.getCreatedAt());
     }
 

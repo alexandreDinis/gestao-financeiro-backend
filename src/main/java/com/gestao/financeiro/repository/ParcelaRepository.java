@@ -86,9 +86,12 @@ public interface ParcelaRepository extends JpaRepository<Parcela, Long> {
         SELECT COALESCE(SUM(p.valorParcela), 0)
         FROM Parcela p
         JOIN p.transacao t
+        JOIN p.fatura f
         WHERE p.dataVencimento BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL
           AND t.status <> 'CANCELADO'
+          AND p.paga = false
+          AND f.status <> 'PAGA'
     """)
     BigDecimal somarParcelasPorVencimento(
             @Param("inicio") LocalDate inicio,
@@ -108,6 +111,27 @@ public interface ParcelaRepository extends JpaRepository<Parcela, Long> {
         GROUP BY t.categoria.id, t.categoria.nome
     """)
     List<GastoCategoriaProjection> somarParcelasPorCategoriaPeriodo(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Relatório — parcelas de cartão que vencem no período, com categoria hierárquica
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Query("""
+        SELECT p FROM Parcela p
+        JOIN FETCH p.transacao t
+        LEFT JOIN FETCH t.categoria c
+        LEFT JOIN FETCH c.categoriaPai
+        JOIN p.fatura f
+        WHERE p.dataVencimento BETWEEN :inicio AND :fim
+          AND t.tenantId = :tenantId
+          AND t.tipo = 'DESPESA'
+          AND t.deletedAt IS NULL
+          AND t.status <> 'CANCELADO'
+    """)
+    List<Parcela> findParcelasCartaoByPeriodo(
+            @Param("tenantId") Long tenantId,
             @Param("inicio") LocalDate inicio,
             @Param("fim") LocalDate fim);
 }

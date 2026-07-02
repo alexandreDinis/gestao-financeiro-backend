@@ -16,7 +16,7 @@ public interface CategoriaRepository extends JpaRepository<Categoria, Long> {
 
     List<Categoria> findByCategoriaPaiId(Long categoriaPaiId);
 
-    boolean existsByNomeAndTenantId(String nome, Long tenantId);
+    boolean existsByNomeIgnoreCaseAndTipoAndTenantId(String nome, TipoCategoria tipo, Long tenantId);
 
     long countByTenantId(Long tenantId);
 }

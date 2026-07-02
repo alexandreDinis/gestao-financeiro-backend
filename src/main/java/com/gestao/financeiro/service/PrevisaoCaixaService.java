@@ -4,6 +4,9 @@ import com.gestao.financeiro.config.TenantContext;
 import com.gestao.financeiro.dto.request.PrevisaoAjusteRequest;
 import com.gestao.financeiro.dto.response.PrevisaoMesResponse;
 import com.gestao.financeiro.dto.response.RelatorioPrevisaoResponse;
+import com.gestao.financeiro.dto.response.EstimativaVariavelDTO;
+import com.gestao.financeiro.dto.response.EstimativaPorCategoriaDTO;
+import com.gestao.financeiro.dto.response.AjusteManualDTO;
 import com.gestao.financeiro.entity.Conta;
 import com.gestao.financeiro.entity.PrevisaoAjuste;
 import com.gestao.financeiro.entity.TransacaoRecorrente;
@@ -23,10 +26,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import com.gestao.financeiro.repository.projection.GastoMensalCategoriaProjection;
 
 @Service
 @RequiredArgsConstructor
@@ -57,6 +64,12 @@ public class PrevisaoCaixaService {
         List<PrevisaoMesResponse> meses = new ArrayList<>();
         YearMonth mesAtual = YearMonth.now();
         BigDecimal saldoCorrente = saldoInicialReal;
+
+        // Calcular Estimativa Variável (últimos 3 meses fechados)
+        YearMonth mesPassado = mesAtual.minusMonths(1);
+        LocalDate fimVariaveis = mesPassado.atEndOfMonth();
+        LocalDate inicioVariaveis = mesPassado.minusMonths(2).atDay(1); // Mês -1, -2, -3
+        EstimativaVariavelDTO estimativaVariavelBase = calcularEstimativaVariavel(inicioVariaveis, fimVariaveis);
 
         List<TransacaoRecorrente> recorrencias = transacaoRecorrenteRepository.findByAtivaTrueAndTenantId(tenantId);
 
@@ -100,31 +113,33 @@ public class PrevisaoCaixaService {
                 }
             }
 
-            BigDecimal totalEntradasPrevistas = entradasLancamento.add(entradasRecorrente).add(entradasDividas);
-            BigDecimal totalSaidasPrevistas = saidasLancamento.add(saidasCartao).add(saidasRecorrente).add(saidasDividas);
+            // O total de Receitas Fixas / Despesas Fixas agora agrupa apenas o que é previsível/conhecido
+            BigDecimal receitasFixas = entradasLancamento.add(entradasRecorrente).add(entradasDividas);
+            BigDecimal despesasFixas = saidasLancamento.add(saidasCartao).add(saidasRecorrente).add(saidasDividas);
 
             // Ajustes Manuais
             PrevisaoAjuste ajuste = previsaoAjusteRepository.findByTenantIdAndMesAndAno(tenantId, ref.getMonthValue(), ref.getYear())
                     .orElse(new PrevisaoAjuste());
             BigDecimal ajusteEntrada = nvl(ajuste.getAjusteEntrada());
             BigDecimal ajusteSaida = nvl(ajuste.getAjusteSaida());
+            AjusteManualDTO ajusteManual = new AjusteManualDTO(ajusteEntrada, ajusteSaida);
 
-            // Cálculo do Saldo Final com Efeito Cascata
-            // Saldo Final = Saldo Inicial + Entradas + Ajuste Entrada - Saídas - Ajuste Saída
+            // Cálculo do Saldo Final com Efeito Cascata (Agregando 3 camadas)
+            // Saldo Final = Saldo Inicial + Receitas Fixas - Despesas Fixas - Estimativa Variável + Ajustes
             BigDecimal saldoFinal = saldoCorrente
-                    .add(totalEntradasPrevistas)
+                    .add(receitasFixas)
+                    .subtract(despesasFixas)
+                    .subtract(estimativaVariavelBase.valor())
                     .add(ajusteEntrada)
-                    .subtract(totalSaidasPrevistas)
                     .subtract(ajusteSaida);
 
             meses.add(new PrevisaoMesResponse(
-                    ref.getMonthValue(),
-                    ref.getYear(),
+                    ref.getYear() + "-" + String.format("%02d", ref.getMonthValue()),
                     saldoCorrente,
-                    totalEntradasPrevistas,
-                    totalSaidasPrevistas,
-                    ajusteEntrada,
-                    ajusteSaida,
+                    receitasFixas,
+                    despesasFixas,
+                    estimativaVariavelBase,
+                    ajusteManual,
                     saldoFinal
             ));
 
@@ -153,5 +168,57 @@ public class PrevisaoCaixaService {
 
     private BigDecimal nvl(BigDecimal valor) {
         return valor == null ? BigDecimal.ZERO : valor;
+    }
+
+    private EstimativaVariavelDTO calcularEstimativaVariavel(LocalDate inicio, LocalDate fim) {
+        List<GastoMensalCategoriaProjection> gastos = transacaoRepository.somarGastosVariaveisMensaisPorCategoria(inicio, fim);
+        
+        YearMonth ymInicio = YearMonth.from(inicio);
+        YearMonth ymFim = YearMonth.from(fim);
+        List<YearMonth> meses = new ArrayList<>();
+        YearMonth current = ymInicio;
+        while (!current.isAfter(ymFim)) {
+            meses.add(current);
+            current = current.plusMonths(1);
+        }
+        int mesesReais = meses.size();
+        if (mesesReais == 0) mesesReais = 1;
+
+        Map<YearMonth, BigDecimal> totaisPorMes = new HashMap<>();
+        Map<Long, String> nomes = new HashMap<>();
+        Map<Long, BigDecimal> somaPorCategoria = new HashMap<>();
+
+        for (GastoMensalCategoriaProjection g : gastos) {
+            YearMonth ym = YearMonth.of(g.getAno(), g.getMes());
+            totaisPorMes.put(ym, totaisPorMes.getOrDefault(ym, BigDecimal.ZERO).add(g.getTotal()));
+            
+            nomes.put(g.getCategoriaId(), g.getNomeCategoria());
+            somaPorCategoria.put(g.getCategoriaId(), somaPorCategoria.getOrDefault(g.getCategoriaId(), BigDecimal.ZERO).add(g.getTotal()));
+        }
+
+        BigDecimal minGlobal = null;
+        BigDecimal maxGlobal = null;
+        BigDecimal somaGlobal = BigDecimal.ZERO;
+
+        for (YearMonth ym : meses) {
+            BigDecimal totalMes = totaisPorMes.getOrDefault(ym, BigDecimal.ZERO);
+            somaGlobal = somaGlobal.add(totalMes);
+            if (minGlobal == null || totalMes.compareTo(minGlobal) < 0) minGlobal = totalMes;
+            if (maxGlobal == null || totalMes.compareTo(maxGlobal) > 0) maxGlobal = totalMes;
+        }
+
+        BigDecimal mediaGlobal = somaGlobal.divide(BigDecimal.valueOf(mesesReais), 2, RoundingMode.HALF_UP);
+        if (minGlobal == null) minGlobal = BigDecimal.ZERO;
+        if (maxGlobal == null) maxGlobal = BigDecimal.ZERO;
+
+        List<EstimativaPorCategoriaDTO> categorias = new ArrayList<>();
+        for (Map.Entry<Long, BigDecimal> entry : somaPorCategoria.entrySet()) {
+            BigDecimal mediaCat = entry.getValue().divide(BigDecimal.valueOf(mesesReais), 2, RoundingMode.HALF_UP);
+            categorias.add(new EstimativaPorCategoriaDTO(entry.getKey(), nomes.get(entry.getKey()), mediaCat));
+        }
+
+        categorias.sort((a, b) -> b.media().compareTo(a.media()));
+
+        return new EstimativaVariavelDTO(mediaGlobal, minGlobal, maxGlobal, mesesReais, categorias);
     }
 }
