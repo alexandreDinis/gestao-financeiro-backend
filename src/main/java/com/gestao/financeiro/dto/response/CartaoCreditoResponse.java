@@ -17,5 +17,7 @@ public record CartaoCreditoResponse(
         Integer melhorDiaCompra,
         Integer diasParaFechar,
         java.time.LocalDate dataVencimentoFaturaAtual,
+        Integer diaFechamento,
+        Integer diaVencimento,
         java.time.LocalDateTime createdAt
 ) {}

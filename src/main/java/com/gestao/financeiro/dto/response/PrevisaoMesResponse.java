@@ -3,12 +3,11 @@ package com.gestao.financeiro.dto.response;
 import java.math.BigDecimal;
 
 public record PrevisaoMesResponse(
-        int mes,
-        int ano,
+        String mes,
         BigDecimal saldoInicial,
-        BigDecimal entradasPrevistas,
-        BigDecimal saidasPrevistas,
-        BigDecimal ajusteEntrada,
-        BigDecimal ajusteSaida,
+        BigDecimal receitasFixas,
+        BigDecimal despesasFixas,
+        EstimativaVariavelDTO estimativaVariavel,
+        AjusteManualDTO ajusteManual,
         BigDecimal saldoFinal
 ) {}

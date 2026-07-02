@@ -104,4 +104,43 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
             @Param("inicio") LocalDate inicio,
             @Param("dataLimite") LocalDate dataLimite,
             org.springframework.data.domain.Pageable pageable);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Relatório — despesas pagas num período, com categoria + categoria pai
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Query("""
+        SELECT t FROM Transacao t
+        LEFT JOIN FETCH t.categoria c
+        LEFT JOIN FETCH c.categoriaPai cp
+        WHERE t.tipo = 'DESPESA'
+          AND t.status = 'PAGO'
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL
+        ORDER BY t.data DESC
+    """)
+    List<Transacao> findDespesasPagasByPeriodo(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    @Query("""
+        SELECT
+            t.categoria.id AS categoriaId,
+            t.categoria.nome AS nomeCategoria,
+            CAST(EXTRACT(MONTH FROM t.data) AS int) AS mes,
+            CAST(EXTRACT(YEAR FROM t.data) AS int) AS ano,
+            COALESCE(SUM(t.valor), 0) AS total
+        FROM Transacao t
+        WHERE t.tipo = 'DESPESA'
+          AND t.status = 'PAGO'
+          AND t.recorrenciaId IS NULL
+          AND (t.tipoDespesa IS NULL OR t.tipoDespesa = 'VARIAVEL')
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL
+          AND t.categoria IS NOT NULL
+        GROUP BY t.categoria.id, t.categoria.nome, EXTRACT(YEAR FROM t.data), EXTRACT(MONTH FROM t.data)
+    """)
+    List<com.gestao.financeiro.repository.projection.GastoMensalCategoriaProjection> somarGastosVariaveisMensaisPorCategoria(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
 }

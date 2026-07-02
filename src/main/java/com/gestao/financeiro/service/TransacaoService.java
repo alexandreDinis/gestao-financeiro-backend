@@ -62,9 +62,10 @@ public class TransacaoService {
 
         Long tenantId = TenantContext.getTenantId();
 
-        // 1. Fetch Standard Transactions (numeroParcelas <= 1)
+        // 1. Fetch ALL Standard Transactions (numeroParcelas <= 1) without DB-level pagination.
+        // We must fetch unpaged because we combine with parcelas + recorrências before paginating in memory.
         Page<Transacao> transacoesPage = transacaoRepository.buscarComFiltros(
-                dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, busca, pageable
+                dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, busca, Pageable.unpaged()
         );
 
         // 2. Fetch Installments for the period (Impact-based)
@@ -86,7 +87,9 @@ public class TransacaoService {
         // 3. Projected Recurring Transactions (Assinaturas)
         // We project occurrences for the filtered period that haven't been materialized yet.
         List<LancamentoResponse> projecoes = new ArrayList<>();
-        if (geradoAutomaticamente == null || geradoAutomaticamente) {
+        // Projecoes are always PENDENTE, so skip if filtering for a different status
+        if ((geradoAutomaticamente == null || geradoAutomaticamente) 
+                && (status == null || status == StatusTransacao.PENDENTE)) {
             LocalDate filterInicio = dataInicio != null ? dataInicio : LocalDate.now().withDayOfMonth(1);
             LocalDate filterFim = dataFim != null ? dataFim : LocalDate.now().plusMonths(3).withDayOfMonth(1).minusDays(1);
             
@@ -96,9 +99,10 @@ public class TransacaoService {
             List<TransacaoRecorrente> recurrences = transacaoRecorrenteRepository.findByAtivaTrueAndTenantId(tenantId);
             
             for (TransacaoRecorrente rec : recurrences) {
-                // Apply basic filters
+                // Apply filters
                 if (tipo != null && rec.getTipo() != tipo) continue;
                 if (categoriaId != null && (rec.getCategoria() == null || !rec.getCategoria().getId().equals(categoriaId))) continue;
+                if (contaId != null && (rec.getConta() == null || !rec.getConta().getId().equals(contaId))) continue;
                 if (busca != null && !rec.getDescricao().toLowerCase().contains(busca.toLowerCase())) continue;
                 
                 // Iterate through months in range
@@ -145,14 +149,35 @@ public class TransacaoService {
 
         Stream<LancamentoResponse> installmentStream = parcelas.stream()
                 .filter(p -> {
-                    // Apply filters manually to installments if they were fetched avulsos
+                    // Apply ALL filters manually to installments
                     if (p.getTransacao() == null) return false;
                     
+                    // Filter by categoriaId
                     if (categoriaId != null) {
                         if (p.getTransacao().getCategoria() == null) return false;
                         if (!categoriaId.equals(p.getTransacao().getCategoria().getId())) return false;
                     }
                     
+                    // Filter by contaId (parcela's card account)
+                    if (contaId != null) {
+                        var lancamentos = p.getTransacao().getLancamentos();
+                        boolean contaMatch = lancamentos.stream()
+                                .anyMatch(l -> l.getConta() != null && contaId.equals(l.getConta().getId()));
+                        if (!contaMatch) return false;
+                    }
+                    
+                    // Filter by status (paga = PAGO, !paga = PENDENTE)
+                    if (status != null) {
+                        StatusTransacao parcelaStatus = p.getPaga() ? StatusTransacao.PAGO : StatusTransacao.PENDENTE;
+                        if (parcelaStatus != status) return false;
+                    }
+                    
+                    // Filter by tipoDespesa
+                    if (tipoDespesa != null) {
+                        if (p.getTransacao().getTipoDespesa() != tipoDespesa) return false;
+                    }
+                    
+                    // Filter by busca (search text)
                     if (busca != null) {
                         String desc = p.getTransacao().getDescricao();
                         if (desc == null || !desc.toLowerCase().contains(busca.toLowerCase())) return false;

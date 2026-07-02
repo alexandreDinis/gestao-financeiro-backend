@@ -8,6 +8,8 @@ import com.gestao.financeiro.service.CategoriaService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,7 +25,7 @@ public class CategoriaController {
     @GetMapping
     public ApiResponse<List<CategoriaResponse>> listar(
             @RequestParam(required = false) TipoCategoria tipo,
-            Pageable pageable) {
+            @PageableDefault(size = 1000, sort = "nome", direction = Sort.Direction.ASC) Pageable pageable) {
         return ApiResponse.ok(categoriaService.listar(tipo, pageable));
     }
 

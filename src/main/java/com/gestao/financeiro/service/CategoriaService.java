@@ -57,8 +57,8 @@ public class CategoriaService {
             throw new BusinessException("Tenant ID não encontrado no contexto");
         }
 
-        if (categoriaRepository.existsByNomeAndTenantId(request.nome(), tenantId)) {
-            throw new BusinessException("Já existe uma categoria com o nome: " + request.nome());
+        if (categoriaRepository.existsByNomeIgnoreCaseAndTipoAndTenantId(request.nome(), request.tipo(), tenantId)) {
+            throw new BusinessException("Já existe uma categoria com o nome '" + request.nome() + "' para o tipo " + request.tipo() + ".");
         }
 
         Categoria categoria = categoriaMapper.toEntity(request);
@@ -80,8 +80,11 @@ public class CategoriaService {
     public CategoriaResponse atualizar(Long id, CategoriaRequest request) {
         Categoria categoria = findById(id);
 
-        if (!categoria.getNome().equals(request.nome()) && categoriaRepository.existsByNomeAndTenantId(request.nome(), categoria.getTenantId())) {
-            throw new BusinessException("Já existe uma categoria com o nome: " + request.nome());
+        boolean nomeChanged = !categoria.getNome().equalsIgnoreCase(request.nome());
+        boolean tipoChanged = categoria.getTipo() != request.tipo();
+
+        if ((nomeChanged || tipoChanged) && categoriaRepository.existsByNomeIgnoreCaseAndTipoAndTenantId(request.nome(), request.tipo(), categoria.getTenantId())) {
+            throw new BusinessException("Já existe uma categoria com o nome '" + request.nome() + "' para o tipo " + request.tipo() + ".");
         }
 
         categoriaMapper.updateEntity(categoria, request);
