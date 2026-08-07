@@ -98,6 +98,19 @@ public interface ParcelaRepository extends JpaRepository<Parcela, Long> {
             @Param("fim") LocalDate fim);
 
     @Query("""
+        SELECT COALESCE(SUM(p.valorParcela), 0)
+        FROM Parcela p
+        JOIN p.transacao t
+        JOIN p.fatura f
+        WHERE p.dataVencimento BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL
+          AND t.status <> 'CANCELADO'
+    """)
+    BigDecimal somarTodasParcelasCartaoPorVencimento(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    @Query("""
         SELECT
             t.categoria.id    AS categoriaId,
             t.categoria.nome  AS nomeCategoria,

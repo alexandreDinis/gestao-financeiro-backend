@@ -7,6 +7,7 @@ import com.gestao.financeiro.dto.response.RelatorioPrevisaoResponse;
 import com.gestao.financeiro.dto.response.EstimativaVariavelDTO;
 import com.gestao.financeiro.dto.response.EstimativaPorCategoriaDTO;
 import com.gestao.financeiro.dto.response.AjusteManualDTO;
+import com.gestao.financeiro.dto.response.ItemPrevisaoDetalhamentoDTO;
 import com.gestao.financeiro.entity.Conta;
 import com.gestao.financeiro.entity.PrevisaoAjuste;
 import com.gestao.financeiro.entity.TransacaoRecorrente;
@@ -20,6 +21,7 @@ import com.gestao.financeiro.repository.PrevisaoAjusteRepository;
 import com.gestao.financeiro.repository.TransacaoRecorrenteRepository;
 import com.gestao.financeiro.repository.TransacaoRepository;
 import com.gestao.financeiro.entity.enums.TipoDivida;
+import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -35,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import com.gestao.financeiro.repository.projection.GastoMensalCategoriaProjection;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PrevisaoCaixaService {
@@ -46,6 +49,7 @@ public class PrevisaoCaixaService {
     private final TransacaoRepository transacaoRepository;
     private final ParcelaDividaRepository parcelaDividaRepository;
     private final ParcelaRepository parcelaRepository;
+    private final com.gestao.financeiro.repository.DividaRepository dividaRepository;
 
     @Transactional(readOnly = true)
     public RelatorioPrevisaoResponse gerarPrevisao(int mesesParaFrente) {
@@ -72,24 +76,71 @@ public class PrevisaoCaixaService {
         EstimativaVariavelDTO estimativaVariavelBase = calcularEstimativaVariavel(inicioVariaveis, fimVariaveis);
 
         List<TransacaoRecorrente> recorrencias = transacaoRecorrenteRepository.findByAtivaTrueAndTenantId(tenantId);
+        List<com.gestao.financeiro.entity.Divida> dividasRecorrentes = dividaRepository.findByRecorrenteTrue();
 
         for (int i = 0; i < mesesParaFrente; i++) {
             YearMonth ref = mesAtual.plusMonths(i);
             LocalDate inicio = ref.atDay(1);
             LocalDate fim = ref.atEndOfMonth();
 
-            // Lançamentos pendentes do mês
-            BigDecimal entradasLancamento = nvl(lancamentoRepository.somarTotalCreditosPendentesPeriodo(inicio, fim));
-            BigDecimal saidasLancamento = nvl(lancamentoRepository.somarTotalDebitosPendentesPeriodoSemCartao(inicio, fim));
+            List<ItemPrevisaoDetalhamentoDTO> detalhamentoReceitas = new java.util.ArrayList<>();
+            List<ItemPrevisaoDetalhamentoDTO> detalhamentoDespesas = new java.util.ArrayList<>();
 
-            // Faturas de cartão projetadas (somamos as parcelas que VENCEM no mês)
-            BigDecimal saidasCartao = nvl(parcelaRepository.somarParcelasPorVencimento(inicio, fim));
+            // 1. Faturas de cartão projetadas (somamos TODAS as parcelas que VENCEM no mês, mantendo a previsão fixa)
+            BigDecimal saidasCartao = nvl(parcelaRepository.somarTodasParcelasCartaoPorVencimento(inicio, fim));
+            List<com.gestao.financeiro.entity.Parcela> listParcelasCartao = parcelaRepository.findParcelasCartaoByPeriodo(tenantId, inicio, fim);
+            for (com.gestao.financeiro.entity.Parcela p : listParcelasCartao) {
+                String desc = p.getTransacao().getDescricao();
+                if (p.getTotalParcelas() != null && p.getTotalParcelas() > 1) {
+                    desc += " (" + p.getNumeroParcela() + "/" + p.getTotalParcelas() + ")";
+                }
+                desc += " [Cartão]";
+                detalhamentoDespesas.add(new ItemPrevisaoDetalhamentoDTO(desc, nvl(p.getValorParcela()), "CARTAO"));
+            }
 
-            // Dívidas entre Pessoas (Empréstimos/Recebíveis)
-            BigDecimal entradasDividas = nvl(parcelaDividaRepository.somarParcelasPendentesPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_RECEBER));
-            BigDecimal saidasDividas = nvl(parcelaDividaRepository.somarParcelasPendentesPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_PAGAR));
+            // 2. Dívidas entre Pessoas (considera TODAS as parcelas programadas do mês: PAGAS e PENDENTES)
+            BigDecimal entradasDividas = nvl(parcelaDividaRepository.somarTodasParcelasPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_RECEBER));
+            BigDecimal saidasDividas = nvl(parcelaDividaRepository.somarTodasParcelasPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_PAGAR));
 
-            // Avaliar recorrências que AINDA não foram geradas para este mês
+            List<com.gestao.financeiro.entity.ParcelaDivida> listDividasReceber = parcelaDividaRepository.findTodasParcelasPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_RECEBER);
+            for (com.gestao.financeiro.entity.ParcelaDivida pd : listDividasReceber) {
+                String pessoaNome = pd.getDivida().getPessoa() != null ? pd.getDivida().getPessoa().getNome() : "Pessoa";
+                String desc = pessoaNome + " - " + pd.getDivida().getDescricao();
+                detalhamentoReceitas.add(new ItemPrevisaoDetalhamentoDTO(desc, nvl(pd.getValor()), "DIVIDA"));
+            }
+
+            List<com.gestao.financeiro.entity.ParcelaDivida> listDividasPagar = parcelaDividaRepository.findTodasParcelasPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_PAGAR);
+            for (com.gestao.financeiro.entity.ParcelaDivida pd : listDividasPagar) {
+                String desc = pd.getDivida().getDescricao();
+                if (pd.getNumeroParcela() != null) {
+                    desc += " (Parcela " + pd.getNumeroParcela() + ")";
+                }
+                desc += " [Dívida]";
+                detalhamentoDespesas.add(new ItemPrevisaoDetalhamentoDTO(desc, nvl(pd.getValor()), "DIVIDA"));
+            }
+
+            // 2b. Projeta dívidas recorrentes ativas que ainda não possuem parcela física gerada para o mês ref
+            for (com.gestao.financeiro.entity.Divida d : dividasRecorrentes) {
+                if (d.getDataInicio() != null && YearMonth.from(d.getDataInicio()).isAfter(ref)) continue;
+                if (d.getDataFim() != null && YearMonth.from(d.getDataFim()).isBefore(ref)) continue;
+
+                boolean jaTemParcela = listDividasReceber.stream().anyMatch(p -> p.getDivida().getId().equals(d.getId())) ||
+                                       listDividasPagar.stream().anyMatch(p -> p.getDivida().getId().equals(d.getId()));
+
+                if (!jaTemParcela) {
+                    BigDecimal valor = d.getValorParcelaRecorrente() != null ? d.getValorParcelaRecorrente() : d.getValorTotal();
+                    if (d.getTipo() == TipoDivida.A_RECEBER) {
+                        entradasDividas = entradasDividas.add(valor);
+                        String pessoaNome = d.getPessoa() != null ? d.getPessoa().getNome() : "Pessoa";
+                        detalhamentoReceitas.add(new ItemPrevisaoDetalhamentoDTO(pessoaNome + " - " + d.getDescricao() + " [Recorrente]", valor, "DIVIDA"));
+                    } else if (d.getTipo() == TipoDivida.A_PAGAR) {
+                        saidasDividas = saidasDividas.add(valor);
+                        detalhamentoDespesas.add(new ItemPrevisaoDetalhamentoDTO(d.getDescricao() + " [Recorrente]", valor, "DIVIDA"));
+                    }
+                }
+            }
+
+            // 3. Recorrências ativas programadas para o mês
             BigDecimal entradasRecorrente = BigDecimal.ZERO;
             BigDecimal saidasRecorrente = BigDecimal.ZERO;
 
@@ -98,24 +149,28 @@ public class PrevisaoCaixaService {
                 if (rec.getDataInicio() != null && YearMonth.from(rec.getDataInicio()).isAfter(ref)) {
                     continue;
                 }
+
+                // Se a recorrência for em Cartão de Crédito, já está incluída na fatura do cartão (saidasCartao)
+                if (rec.getConta() != null && rec.getConta().getTipo() == com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO) {
+                    continue;
+                }
                 
-                // Se a transação já foi gerada no banco para este mês, o valor dela já está em entradasLancamento/saidasLancamento
-                // (assumindo que a transação gerada não foi deletada)
-                boolean jaGerada = transacaoRepository.existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(rec.getId(), ref.toString());
-                
-                if (!jaGerada) {
-                    BigDecimal valor = nvl(rec.getValor());
-                    if (rec.getTipo() == com.gestao.financeiro.entity.enums.TipoTransacao.RECEITA) {
-                        entradasRecorrente = entradasRecorrente.add(valor);
-                    } else {
-                        saidasRecorrente = saidasRecorrente.add(valor);
-                    }
+                BigDecimal valor = nvl(rec.getValor());
+                if (rec.getTipo() == com.gestao.financeiro.entity.enums.TipoTransacao.RECEITA) {
+                    entradasRecorrente = entradasRecorrente.add(valor);
+                    detalhamentoReceitas.add(new ItemPrevisaoDetalhamentoDTO(rec.getDescricao() + " (Recorrência)", valor, "RECORRENCIA"));
+                } else {
+                    saidasRecorrente = saidasRecorrente.add(valor);
+                    detalhamentoDespesas.add(new ItemPrevisaoDetalhamentoDTO(rec.getDescricao() + " (Recorrência)", valor, "RECORRENCIA"));
                 }
             }
 
-            // O total de Receitas Fixas / Despesas Fixas agora agrupa apenas o que é previsível/conhecido
-            BigDecimal receitasFixas = entradasLancamento.add(entradasRecorrente).add(entradasDividas);
-            BigDecimal despesasFixas = saidasLancamento.add(saidasCartao).add(saidasRecorrente).add(saidasDividas);
+            // O total de Receitas Fixas / Despesas Fixas considera APENAS o que está programado (Dívidas, Recorrências e Faturas)
+            BigDecimal receitasFixas = entradasRecorrente.add(entradasDividas);
+            BigDecimal despesasFixas = saidasCartao.add(saidasRecorrente).add(saidasDividas);
+
+            log.info("[PrevisaoCaixa] Mes={}: entradasRecorrente={}, entradasDividas={}, receitasFixas={}",
+                    ref, entradasRecorrente, entradasDividas, receitasFixas);
 
             // Ajustes Manuais
             PrevisaoAjuste ajuste = previsaoAjusteRepository.findByTenantIdAndMesAndAno(tenantId, ref.getMonthValue(), ref.getYear())
@@ -123,6 +178,9 @@ public class PrevisaoCaixaService {
             BigDecimal ajusteEntrada = nvl(ajuste.getAjusteEntrada());
             BigDecimal ajusteSaida = nvl(ajuste.getAjusteSaida());
             AjusteManualDTO ajusteManual = new AjusteManualDTO(ajusteEntrada, ajusteSaida);
+
+            // Cálculo do Total de Despesas Estimadas (Fixas + Variável Estimado)
+            BigDecimal totalDespesasEstimadas = despesasFixas.add(estimativaVariavelBase.valor());
 
             // Cálculo do Saldo Final com Efeito Cascata (Agregando 3 camadas)
             // Saldo Final = Saldo Inicial + Receitas Fixas - Despesas Fixas - Estimativa Variável + Ajustes
@@ -137,8 +195,11 @@ public class PrevisaoCaixaService {
                     ref.getYear() + "-" + String.format("%02d", ref.getMonthValue()),
                     saldoCorrente,
                     receitasFixas,
+                    detalhamentoReceitas,
                     despesasFixas,
+                    detalhamentoDespesas,
                     estimativaVariavelBase,
+                    totalDespesasEstimadas,
                     ajusteManual,
                     saldoFinal
             ));

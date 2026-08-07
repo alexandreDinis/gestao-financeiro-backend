@@ -87,6 +87,13 @@ public class DividaController {
         return ApiResponse.created(dividaService.criar(request));
     }
 
+    @PutMapping("/{id}")
+    public ApiResponse<DividaResponse> atualizar(
+            @PathVariable Long id,
+            @RequestBody DividaRequest request) {
+        return ApiResponse.ok(dividaService.atualizar(id, request));
+    }
+
     @PutMapping("/parcelas/{parcelaId}/pagar")
     public ApiResponse<ParcelaDividaResponse> pagarParcela(
             @PathVariable Long parcelaId,

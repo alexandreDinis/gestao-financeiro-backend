@@ -23,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -61,6 +62,37 @@ public class TransacaoService {
             Pageable pageable) {
 
         Long tenantId = TenantContext.getTenantId();
+
+        // 0. Check if filtering by a specific Credit Card account
+        boolean isCartaoCredito = false;
+        if (contaId != null) {
+            var contaOpt = contaRepository.findById(contaId);
+            if (contaOpt.isPresent() && contaOpt.get().getTipo() == com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO) {
+                isCartaoCredito = true;
+            }
+        }
+
+        if (isCartaoCredito) {
+            // When filtering by a Credit Card, return all transactions launched on that card in the date range by purchase date (t.data)
+            List<Transacao> cartaoTransacoes = transacaoRepository.buscarTransacoesCartao(
+                    dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, busca
+            );
+
+            List<LancamentoResponse> combined = cartaoTransacoes.stream()
+                    .map(transacaoMapper::toLedgerResponse)
+                    .sorted(Comparator.comparing(LancamentoResponse::dataReferencia).reversed())
+                    .toList();
+
+            int start = (int) pageable.getOffset();
+            int end = Math.min((start + pageable.getPageSize()), combined.size());
+
+            List<LancamentoResponse> paginatedList = new ArrayList<>();
+            if (start < combined.size()) {
+                paginatedList = combined.subList(start, end);
+            }
+
+            return new PageImpl<>(paginatedList, pageable, combined.size());
+        }
 
         // 1. Fetch ALL Standard Transactions (numeroParcelas <= 1) without DB-level pagination.
         // We must fetch unpaged because we combine with parcelas + recorrências before paginating in memory.
@@ -208,6 +240,40 @@ public class TransacaoService {
 
     public TransacaoResponse buscarPorId(Long id) {
         return transacaoMapper.toResponse(findById(id));
+    }
+
+    public com.gestao.financeiro.dto.response.UltimaTransacaoResponse buscarUltimaTransacao(Long contaId, TipoTransacao tipo) {
+        Long tenantId = TenantContext.getTenantId();
+        List<Transacao> result = transacaoRepository.findUltimaTransacaoCadastrada(tenantId, contaId, tipo, PageRequest.of(0, 1));
+        if (result.isEmpty()) {
+            return null;
+        }
+
+        Transacao t = result.get(0);
+        String contaNome = null;
+        Long contaIdFound = null;
+        if (t.getLancamentos() != null && !t.getLancamentos().isEmpty()) {
+            var l = t.getLancamentos().get(0);
+            if (l.getConta() != null) {
+                contaNome = l.getConta().getNome();
+                contaIdFound = l.getConta().getId();
+            }
+        }
+
+        return new com.gestao.financeiro.dto.response.UltimaTransacaoResponse(
+                t.getId(),
+                t.getDescricao(),
+                t.getValor(),
+                t.getTipo(),
+                t.getStatus(),
+                t.getData(),
+                t.getCreatedAt(),
+                contaIdFound,
+                contaNome,
+                t.getCategoria() != null ? t.getCategoria().getId() : null,
+                t.getCategoria() != null ? t.getCategoria().getNome() : null,
+                t.getCategoria() != null ? t.getCategoria().getCor() : null
+        );
     }
 
     /**

@@ -7,6 +7,7 @@ import com.gestao.financeiro.entity.Divida;
 import com.gestao.financeiro.entity.ParcelaDivida;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @Component
@@ -40,13 +41,28 @@ public class DividaMapper {
                 .map(this::toParcelaResponse)
                 .toList();
 
+        boolean isRecorrente = Boolean.TRUE.equals(entity.getRecorrente());
+        BigDecimal valorParcelaRecorrente = entity.getValorParcelaRecorrente();
+        if (isRecorrente && valorParcelaRecorrente == null) {
+            if (entity.getParcelas() != null && !entity.getParcelas().isEmpty()) {
+                valorParcelaRecorrente = entity.getParcelas().get(0).getValor();
+            } else {
+                valorParcelaRecorrente = entity.getValorTotal();
+            }
+        }
+
+        BigDecimal valorTotal = isRecorrente && valorParcelaRecorrente != null ? valorParcelaRecorrente : entity.getValorTotal();
+
         return new DividaResponse(
                 entity.getId(),
                 entity.getPessoa() != null ? entity.getPessoa().getId() : null,
                 entity.getPessoa() != null ? entity.getPessoa().getNome() : "Não vinculada",
+                entity.getCategoria() != null ? entity.getCategoria().getId() : null,
+                entity.getCategoria() != null ? entity.getCategoria().getNome() : null,
+                entity.getCategoria() != null ? entity.getCategoria().getCor() : null,
                 entity.getDescricao(),
                 entity.getTipo(),
-                entity.getValorTotal(),
+                valorTotal,
                 entity.getValorRestante(),
                 entity.getDataInicio(),
                 entity.getDataFim(),
@@ -58,7 +74,7 @@ public class DividaMapper {
                 entity.getRecorrente(),
                 entity.getPeriodicidade(),
                 entity.getDiaVencimento(),
-                entity.getValorParcelaRecorrente()
+                valorParcelaRecorrente
         );
     }
 

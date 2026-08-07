@@ -1,10 +1,14 @@
 package com.gestao.financeiro.service;
 
+import com.gestao.financeiro.dto.request.GerarOrcamentoLoteRequest;
+import com.gestao.financeiro.dto.request.OrcamentoItemLoteRequest;
 import com.gestao.financeiro.dto.request.OrcamentoRequest;
 import com.gestao.financeiro.dto.response.OrcamentoResponse;
 import com.gestao.financeiro.dto.response.OrcamentoResumoResponse;
+import com.gestao.financeiro.dto.response.OrcamentoSugestaoResponse;
 import com.gestao.financeiro.entity.Categoria;
 import com.gestao.financeiro.entity.Orcamento;
+import com.gestao.financeiro.entity.enums.TipoCategoria;
 import com.gestao.financeiro.exception.BusinessException;
 import com.gestao.financeiro.exception.ResourceNotFoundException;
 import com.gestao.financeiro.mapper.OrcamentoMapper;
@@ -13,6 +17,7 @@ import com.gestao.financeiro.repository.OrcamentoRepository;
 import com.gestao.financeiro.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +26,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.TemporalAdjusters;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -105,6 +111,95 @@ public class OrcamentoService {
                     breakdown.isEmpty() ? null : breakdown
             );
         }).toList();
+    }
+
+    public List<OrcamentoSugestaoResponse> gerarSugestoes(Integer mes, Integer ano, Integer mesesHistorico) {
+        int window = (mesesHistorico == null || mesesHistorico <= 0) ? 3 : mesesHistorico;
+
+        LocalDate targetMonthStart = LocalDate.of(ano, mes, 1);
+        LocalDate inicioHistorico = targetMonthStart.minusMonths(window);
+        LocalDate fimHistorico = targetMonthStart.minusDays(1);
+
+        // Fetch all DESPESA categories for the tenant
+        List<Categoria> categoriasDespesa = categoriaRepository.findByTipo(TipoCategoria.DESPESA, Pageable.unpaged()).getContent()
+                .stream().filter(c -> c.getDeletedAt() == null).toList();
+
+        // Existing orcamentos for the target month
+        List<Orcamento> orcamentosExistentes = orcamentoRepository.findByMesAndAno(mes, ano);
+
+        return categoriasDespesa.stream().map(cat -> {
+            Long catId = cat.getId();
+
+            // Calculate total expenses over historical window (including subcategories)
+            List<Categoria> subcats = categoriaRepository.findByCategoriaPaiId(catId);
+            BigDecimal totalHistoricoPai = calcularGastoCategoria(catId, inicioHistorico, fimHistorico);
+            BigDecimal totalHistoricoSub = BigDecimal.ZERO;
+            for (Categoria sub : subcats) {
+                totalHistoricoSub = totalHistoricoSub.add(calcularGastoCategoria(sub.getId(), inicioHistorico, fimHistorico));
+            }
+            BigDecimal totalHistorico = totalHistoricoPai.add(totalHistoricoSub);
+
+            BigDecimal mediaHistorica = totalHistorico.divide(BigDecimal.valueOf(window), 2, RoundingMode.HALF_UP);
+
+            Orcamento orcExistente = orcamentosExistentes.stream()
+                    .filter(o -> o.getCategoria().getId().equals(catId))
+                    .findFirst()
+                    .orElse(null);
+
+            BigDecimal limiteAtual = orcExistente != null ? orcExistente.getLimite() : null;
+            BigDecimal limiteSugerido = limiteAtual != null ? limiteAtual : mediaHistorica;
+
+            return new OrcamentoSugestaoResponse(
+                    cat.getId(),
+                    cat.getNome(),
+                    cat.getCor(),
+                    mediaHistorica,
+                    limiteAtual,
+                    limiteSugerido
+            );
+        }).toList();
+    }
+
+    @Transactional
+    public List<OrcamentoResponse> salvarLote(GerarOrcamentoLoteRequest request) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            throw new BusinessException("Tenant ID não encontrado no contexto");
+        }
+
+        List<Orcamento> orcamentosExistentes = orcamentoRepository.findByMesAndAno(request.mes(), request.ano());
+        List<OrcamentoResponse> resultado = new ArrayList<>();
+
+        for (OrcamentoItemLoteRequest item : request.orcamentos()) {
+            if (item.limite() == null) continue;
+
+            Orcamento orcamento = orcamentosExistentes.stream()
+                    .filter(o -> o.getCategoria().getId().equals(item.categoriaId()))
+                    .findFirst()
+                    .orElse(null);
+
+            if (orcamento != null) {
+                orcamento.setLimite(item.limite());
+                orcamento = orcamentoRepository.save(orcamento);
+                resultado.add(orcamentoMapper.toResponse(orcamento));
+            } else if (item.limite().compareTo(BigDecimal.ZERO) > 0) {
+                Categoria categoria = categoriaRepository.findById(item.categoriaId())
+                        .orElseThrow(() -> new ResourceNotFoundException("Categoria", item.categoriaId()));
+
+                Orcamento novo = new Orcamento();
+                novo.setTenantId(tenantId);
+                novo.setCategoria(categoria);
+                novo.setMes(request.mes());
+                novo.setAno(request.ano());
+                novo.setLimite(item.limite());
+
+                novo = orcamentoRepository.save(novo);
+                resultado.add(orcamentoMapper.toResponse(novo));
+            }
+        }
+
+        log.info("[tenant={}] Salvos {} orçamentos em lote para {}/{}", tenantId, resultado.size(), request.mes(), request.ano());
+        return resultado;
     }
 
     private BigDecimal calcularGastoCategoria(Long catId, LocalDate inicio, LocalDate fim) {
