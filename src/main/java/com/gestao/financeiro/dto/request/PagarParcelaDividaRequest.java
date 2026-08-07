@@ -12,5 +12,7 @@ public record PagarParcelaDividaRequest(
 
         LocalDate dataPagamento,
 
-        java.math.BigDecimal valorPago
+        java.math.BigDecimal valorPago,
+
+        String descontarExcedenteDe
 ) {}

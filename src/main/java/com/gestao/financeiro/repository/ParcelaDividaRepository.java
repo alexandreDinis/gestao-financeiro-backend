@@ -10,6 +10,8 @@ import java.util.List;
 @Repository
 public interface ParcelaDividaRepository extends JpaRepository<ParcelaDivida, Long> {
     List<ParcelaDivida> findByDividaId(Long dividaId);
+    List<ParcelaDivida> findByDividaIdAndStatusOrderByDataVencimentoAsc(Long dividaId, com.gestao.financeiro.entity.enums.StatusTransacao status);
+    List<ParcelaDivida> findByDividaIdAndStatusOrderByDataVencimentoDesc(Long dividaId, com.gestao.financeiro.entity.enums.StatusTransacao status);
 
     @org.springframework.data.jpa.repository.Query(value = "SELECT COUNT(*) > 0 FROM parcela_divida WHERE divida_id = :dividaId AND data_vencimento = :vencimento", nativeQuery = true)
     boolean existsByDividaIdAndDataVencimento(@org.springframework.data.repository.query.Param("dividaId") Long dividaId, @org.springframework.data.repository.query.Param("vencimento") LocalDate vencimento);
@@ -17,7 +19,7 @@ public interface ParcelaDividaRepository extends JpaRepository<ParcelaDivida, Lo
     @org.springframework.data.jpa.repository.Query("""
         SELECT p FROM ParcelaDivida p
         JOIN FETCH p.divida d
-        WHERE p.transacaoGerada IS NULL
+        WHERE p.status = 'PENDENTE'
           AND d.deletedAt IS NULL
           AND (
                (p.dataVencimento BETWEEN :inicio AND :limite)

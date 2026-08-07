@@ -295,11 +295,8 @@ public class DividaService {
         if (valorPago.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException("Valor pago deve ser maior que zero.");
         }
-        if (valorPago.compareTo(parcela.getValor()) > 0) {
-            throw new BusinessException("O valor pago não pode ser maior que o saldo atual da parcela.");
-        }
 
-        // 1. Verificar se é parcial
+        // 1. Verificar se é parcial ou se tem excedente (pagamento a maior)
         ParcelaDivida novaParcelaPendente = null;
         if (valorPago.compareTo(parcela.getValor()) < 0) {
             BigDecimal saldoRestante = parcela.getValor().subtract(valorPago);
@@ -315,6 +312,31 @@ public class DividaService {
                     .dataVencimento(parcela.getDataVencimento())
                     .status(StatusTransacao.PENDENTE)
                     .build();
+        } else if (valorPago.compareTo(parcela.getValor()) > 0) {
+            BigDecimal excedente = valorPago.subtract(parcela.getValor());
+            
+            // Abater excedente de outras parcelas pendentes da dívida (próxima ou última)
+            String opcaoAbater = request.descontarExcedenteDe() != null ? request.descontarExcedenteDe() : "PROXIMA";
+            List<ParcelaDivida> pendentes = "ULTIMA".equalsIgnoreCase(opcaoAbater)
+                    ? parcelaRepository.findByDividaIdAndStatusOrderByDataVencimentoDesc(divida.getId(), StatusTransacao.PENDENTE)
+                    : parcelaRepository.findByDividaIdAndStatusOrderByDataVencimentoAsc(divida.getId(), StatusTransacao.PENDENTE);
+
+            BigDecimal saldoAbater = excedente;
+            for (ParcelaDivida p : pendentes) {
+                if (saldoAbater.compareTo(BigDecimal.ZERO) <= 0) break;
+                if (p.getId().equals(parcela.getId())) continue;
+
+                if (p.getValor().compareTo(saldoAbater) <= 0) {
+                    saldoAbater = saldoAbater.subtract(p.getValor());
+                    p.setValor(BigDecimal.ZERO);
+                    p.setStatus(StatusTransacao.PAGO);
+                    p.setDataPagamento(dataPag);
+                } else {
+                    p.setValor(p.getValor().subtract(saldoAbater));
+                    saldoAbater = BigDecimal.ZERO;
+                }
+                parcelaRepository.save(p);
+            }
         }
 
         // 2. Atualizar Parcela Atual
