@@ -62,6 +62,32 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
             @Param("busca") String busca,
             Pageable pageable);
 
+    @Query("""
+        SELECT DISTINCT t FROM Transacao t
+        LEFT JOIN FETCH t.categoria
+        LEFT JOIN FETCH t.usuario
+        JOIN t.lancamentos l
+        WHERE l.conta.id = :contaId
+          AND (CAST(:dataInicio AS LocalDate) IS NULL OR t.data >= :dataInicio)
+          AND (CAST(:dataFim AS LocalDate) IS NULL OR t.data <= :dataFim)
+          AND (CAST(:categoriaId AS long) IS NULL OR t.categoria.id = :categoriaId)
+          AND (:tipo IS NULL OR t.tipo = :tipo)
+          AND (:tipoDespesa IS NULL OR t.tipoDespesa = :tipoDespesa)
+          AND (:status IS NULL OR t.status = :status)
+          AND (:busca IS NULL OR LOWER(CAST(t.descricao AS string)) LIKE LOWER(CONCAT('%', CAST(:busca AS string), '%')))
+          AND t.deletedAt IS NULL
+        ORDER BY t.data DESC, t.id DESC
+    """)
+    List<Transacao> buscarTransacoesCartao(
+            @Param("dataInicio") LocalDate dataInicio,
+            @Param("dataFim") LocalDate dataFim,
+            @Param("categoriaId") Long categoriaId,
+            @Param("contaId") Long contaId,
+            @Param("tipo") TipoTransacao tipo,
+            @Param("tipoDespesa") TipoDespesa tipoDespesa,
+            @Param("status") StatusTransacao status,
+            @Param("busca") String busca);
+
     long countByTenantIdAndDataBetween(Long tenantId, LocalDate dataInicio, LocalDate dataFim);
 
     // ─────────────────────────────────────────────────────────────────────────

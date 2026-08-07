@@ -62,6 +62,37 @@ public class TransacaoService {
 
         Long tenantId = TenantContext.getTenantId();
 
+        // 0. Check if filtering by a specific Credit Card account
+        boolean isCartaoCredito = false;
+        if (contaId != null) {
+            var contaOpt = contaRepository.findById(contaId);
+            if (contaOpt.isPresent() && contaOpt.get().getTipo() == com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO) {
+                isCartaoCredito = true;
+            }
+        }
+
+        if (isCartaoCredito) {
+            // When filtering by a Credit Card, return all transactions launched on that card in the date range by purchase date (t.data)
+            List<Transacao> cartaoTransacoes = transacaoRepository.buscarTransacoesCartao(
+                    dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, busca
+            );
+
+            List<LancamentoResponse> combined = cartaoTransacoes.stream()
+                    .map(transacaoMapper::toLedgerResponse)
+                    .sorted(Comparator.comparing(LancamentoResponse::dataReferencia).reversed())
+                    .toList();
+
+            int start = (int) pageable.getOffset();
+            int end = Math.min((start + pageable.getPageSize()), combined.size());
+
+            List<LancamentoResponse> paginatedList = new ArrayList<>();
+            if (start < combined.size()) {
+                paginatedList = combined.subList(start, end);
+            }
+
+            return new PageImpl<>(paginatedList, pageable, combined.size());
+        }
+
         // 1. Fetch ALL Standard Transactions (numeroParcelas <= 1) without DB-level pagination.
         // We must fetch unpaged because we combine with parcelas + recorrências before paginating in memory.
         Page<Transacao> transacoesPage = transacaoRepository.buscarComFiltros(
