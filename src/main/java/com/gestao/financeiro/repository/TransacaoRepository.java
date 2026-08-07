@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
@@ -113,13 +114,44 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
         SELECT t FROM Transacao t
         LEFT JOIN FETCH t.categoria c
         LEFT JOIN FETCH c.categoriaPai cp
-        WHERE t.tipo = 'DESPESA'
+        WHERE t.tenantId = :tenantId
+          AND t.tipo = 'DESPESA'
           AND t.status = 'PAGO'
           AND t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL
         ORDER BY t.data DESC
     """)
     List<Transacao> findDespesasPagasByPeriodo(
+            @Param("tenantId") Long tenantId,
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    @Query("""
+        SELECT t FROM Transacao t
+        LEFT JOIN FETCH t.categoria c
+        LEFT JOIN FETCH c.categoriaPai cp
+        WHERE t.tenantId = :tenantId
+          AND t.tipo = 'RECEITA'
+          AND t.status = 'PAGO'
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL
+        ORDER BY t.data DESC
+    """)
+    List<Transacao> findReceitasPagasByPeriodo(
+            @Param("tenantId") Long tenantId,
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    @Query("""
+        SELECT COALESCE(SUM(t.valor), 0) FROM Transacao t
+        WHERE t.tenantId = :tenantId
+          AND t.tipo = 'RECEITA'
+          AND t.status = 'PAGO'
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL
+    """)
+    BigDecimal somarReceitasPagasByPeriodo(
+            @Param("tenantId") Long tenantId,
             @Param("inicio") LocalDate inicio,
             @Param("fim") LocalDate fim);
 
