@@ -32,6 +32,10 @@ public class Divida extends TenantEntity {
     @JoinColumn(name = "pessoa_id", nullable = true)
     private Pessoa pessoa;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "categoria_id", nullable = true)
+    private Categoria categoria;
+
     @Column(nullable = false)
     private String descricao;
 

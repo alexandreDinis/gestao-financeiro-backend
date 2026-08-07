@@ -187,15 +187,20 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
             t.categoria.nome AS nomeCategoria,
             CAST(EXTRACT(MONTH FROM t.data) AS int) AS mes,
             CAST(EXTRACT(YEAR FROM t.data) AS int) AS ano,
-            COALESCE(SUM(t.valor), 0) AS total
-        FROM Transacao t
+            COALESCE(SUM(l.valor), 0) AS total
+        FROM Lancamento l
+        JOIN l.transacao t
+        JOIN l.conta c
         WHERE t.tipo = 'DESPESA'
-          AND t.status = 'PAGO'
+          AND t.status <> 'CANCELADO'
+          AND l.direcao = 'DEBITO'
+          AND c.tipo <> com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO
           AND t.recorrenciaId IS NULL
           AND (t.tipoDespesa IS NULL OR t.tipoDespesa = 'VARIAVEL')
           AND t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL
           AND t.categoria IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM ParcelaDivida pd WHERE pd.transacaoGerada = t)
         GROUP BY t.categoria.id, t.categoria.nome, EXTRACT(YEAR FROM t.data), EXTRACT(MONTH FROM t.data)
     """)
     List<com.gestao.financeiro.repository.projection.GastoMensalCategoriaProjection> somarGastosVariaveisMensaisPorCategoria(

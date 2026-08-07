@@ -176,6 +176,36 @@ public interface LancamentoRepository extends JpaRepository<Lancamento, Long> {
             @Param("inicio") LocalDate inicio,
             @Param("fim") LocalDate fim);
 
+    @Query("""
+        SELECT COALESCE(SUM(l.valor), 0)
+        FROM Lancamento l JOIN l.transacao t
+        WHERE l.direcao = 'CREDITO'
+          AND l.conta.tipo <> 'CARTAO_CREDITO'
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND t.tipo <> 'TRANSFERENCIA'
+          AND t.recorrenciaId IS NULL
+          AND NOT EXISTS (SELECT pd FROM ParcelaDivida pd WHERE pd.transacaoGerada = t)
+    """)
+    BigDecimal somarTotalCreditosFixosPeriodo(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    @Query("""
+        SELECT COALESCE(SUM(l.valor), 0)
+        FROM Lancamento l JOIN l.transacao t
+        WHERE l.direcao = 'DEBITO'
+          AND l.conta.tipo <> 'CARTAO_CREDITO'
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL AND t.status <> 'CANCELADO'
+          AND t.tipo <> 'TRANSFERENCIA'
+          AND t.recorrenciaId IS NULL
+          AND NOT EXISTS (SELECT pd FROM ParcelaDivida pd WHERE pd.transacaoGerada = t)
+    """)
+    BigDecimal somarTotalDebitosFixosPeriodoSemCartao(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
     // ─────────────────────────────────────────────────────────────────────────
     // ✅ FIX Problema 2 — projection tipada (antes retornava Object[])
     //    Traz gastos de TODAS as categorias de uma vez; orçamentos montam em memória.
