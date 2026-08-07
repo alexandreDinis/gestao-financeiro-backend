@@ -1,9 +1,11 @@
 package com.gestao.financeiro.controller;
 
+import com.gestao.financeiro.dto.request.GerarOrcamentoLoteRequest;
 import com.gestao.financeiro.dto.request.OrcamentoRequest;
 import com.gestao.financeiro.dto.response.ApiResponse;
 import com.gestao.financeiro.dto.response.OrcamentoResponse;
 import com.gestao.financeiro.dto.response.OrcamentoResumoResponse;
+import com.gestao.financeiro.dto.response.OrcamentoSugestaoResponse;
 import com.gestao.financeiro.service.OrcamentoService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +33,19 @@ public class OrcamentoController {
             @RequestParam Integer mes,
             @RequestParam Integer ano) {
         return ApiResponse.ok(orcamentoService.resumo(mes, ano));
+    }
+
+    @GetMapping("/sugestao")
+    public ApiResponse<List<OrcamentoSugestaoResponse>> sugestao(
+            @RequestParam Integer mes,
+            @RequestParam Integer ano,
+            @RequestParam(required = false, defaultValue = "3") Integer mesesHistorico) {
+        return ApiResponse.ok(orcamentoService.gerarSugestoes(mes, ano, mesesHistorico));
+    }
+
+    @PostMapping("/lote")
+    public ApiResponse<List<OrcamentoResponse>> salvarLote(@Valid @RequestBody GerarOrcamentoLoteRequest request) {
+        return ApiResponse.ok(orcamentoService.salvarLote(request));
     }
 
     @PostMapping
