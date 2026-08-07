@@ -85,7 +85,7 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Query("""
-        SELECT DISTINCT t FROM Transacao t
+        SELECT t FROM Transacao t
         LEFT JOIN FETCH t.lancamentos l
         LEFT JOIN FETCH l.conta
         WHERE t.tenantId = :tenantId
@@ -93,10 +93,10 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
           AND t.deletedAt IS NULL
           AND (t.numeroParcelas IS NULL OR t.numeroParcelas <= 1)
           AND (
-               (t.data BETWEEN :inicio AND :dataLimite)
-               OR (t.data < :hoje AND t.status = 'PENDENTE')
+               (COALESCE(t.dataVencimento, t.data) BETWEEN :inicio AND :dataLimite)
+               OR (COALESCE(t.dataVencimento, t.data) < :hoje AND t.status = 'PENDENTE')
           )
-        ORDER BY t.data ASC
+        ORDER BY COALESCE(t.dataVencimento, t.data) ASC
     """)
     List<Transacao> findProximosVencimentos(
             @Param("tenantId") Long tenantId,
