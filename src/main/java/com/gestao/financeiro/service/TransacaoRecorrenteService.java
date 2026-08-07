@@ -119,10 +119,37 @@ public class TransacaoRecorrenteService {
             Categoria categoria = categoriaRepository.findById(request.categoriaId())
                     .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
             recorrente.setCategoria(categoria);
+        } else {
+            recorrente.setCategoria(null);
         }
 
         recorrente = recorrenteRepository.save(recorrente);
         log.info("[tenant={}] Recorrência atualizada: id={}", recorrente.getTenantId(), id);
+
+        // Propagar alterações para transações PENDENTES materializadas a partir desta recorrência
+        List<Transacao> pendentes = transacaoRepository.findByRecorrenciaId(recorrente.getId()).stream()
+                .filter(t -> t.getStatus() == StatusTransacao.PENDENTE)
+                .toList();
+
+        for (Transacao tx : pendentes) {
+            tx.setDescricao(recorrente.getDescricao() + " (recorrente)");
+            tx.setValor(recorrente.getValor());
+            tx.setValorPrevisto(Boolean.TRUE.equals(recorrente.getValorVariavel()) ? recorrente.getValor() : null);
+            tx.setCategoria(recorrente.getCategoria());
+            if (recorrente.getConta() != null && tx.getLancamentos() != null) {
+                final Conta contaAlvo = recorrente.getConta();
+                tx.getLancamentos().forEach(l -> l.setConta(contaAlvo));
+            }
+
+            if (recorrente.getDiaVencimento() != null) {
+                LocalDate baseDate = tx.getDataVencimento() != null ? tx.getDataVencimento() : (tx.getData() != null ? tx.getData() : dateProvider.now());
+                int maxDia = Math.min(recorrente.getDiaVencimento(), baseDate.lengthOfMonth());
+                LocalDate novaData = baseDate.withDayOfMonth(maxDia);
+                tx.setDataVencimento(novaData);
+                tx.setData(novaData);
+            }
+            transacaoRepository.save(tx);
+        }
 
         return recorrenteMapper.toResponse(recorrente);
     }
@@ -231,13 +258,15 @@ public class TransacaoRecorrenteService {
     }
 
     private void gerarTransacao(TransacaoRecorrente rec, LocalDate hoje) {
+        LocalDate dataVencimento = rec.getDiaVencimento() != null
+                ? hoje.withDayOfMonth(Math.min(rec.getDiaVencimento(), hoje.lengthOfMonth()))
+                : hoje;
+
         TransacaoRequest request = new TransacaoRequest(
                 rec.getDescricao() + " (recorrente)",
                 rec.getValor(),
-                hoje,
-                rec.getDiaVencimento() != null
-                        ? hoje.withDayOfMonth(Math.min(rec.getDiaVencimento(), hoje.lengthOfMonth()))
-                        : null,
+                dataVencimento,
+                dataVencimento,
                 rec.getTipo(),
                 null, // tipoDespesa
                 rec.getCategoria() != null ? rec.getCategoria().getId() : null,

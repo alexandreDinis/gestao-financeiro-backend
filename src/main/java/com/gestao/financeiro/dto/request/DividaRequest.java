@@ -11,6 +11,7 @@ import java.time.LocalDate;
 
 public record DividaRequest(
         Long pessoaId,
+        Long categoriaId,
 
         @NotBlank(message = "Descrição é obrigatória")
         String descricao,

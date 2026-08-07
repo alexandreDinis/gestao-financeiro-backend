@@ -4,6 +4,7 @@ import com.gestao.financeiro.dto.response.ApiResponse;
 import com.gestao.financeiro.dto.response.FluxoMensalResponse;
 import com.gestao.financeiro.dto.response.GastoPorCategoriaResponse;
 import com.gestao.financeiro.dto.response.RelatorioGastosMensaisResponse;
+import com.gestao.financeiro.dto.response.RelatorioReceitasMensaisResponse;
 import com.gestao.financeiro.service.RelatorioService;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -41,5 +42,12 @@ public class RelatorioController {
             @RequestParam @Min(1) @Max(12) int mes,
             @RequestParam @Min(2000) int ano) {
         return ApiResponse.ok(relatorioService.gastosMensaisDetalhados(ano, mes));
+    }
+
+    @GetMapping("/receitas-mensais")
+    public ApiResponse<RelatorioReceitasMensaisResponse> receitasMensais(
+            @RequestParam @Min(1) @Max(12) int mes,
+            @RequestParam @Min(2000) int ano) {
+        return ApiResponse.ok(relatorioService.receitasMensaisDetalhadas(ano, mes));
     }
 }

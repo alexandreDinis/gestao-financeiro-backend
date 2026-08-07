@@ -126,6 +126,12 @@ public class DividaService {
         divida.setTenantId(tenantId);
         divida.setPessoa(pessoa);
 
+        if (request.categoriaId() != null) {
+            Categoria categoria = categoriaRepository.findById(request.categoriaId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
+            divida.setCategoria(categoria);
+        }
+
         boolean isRecorrente = Boolean.TRUE.equals(request.recorrente());
 
         if (isRecorrente) {
@@ -186,6 +192,80 @@ public class DividaService {
     }
 
     @Transactional
+    public DividaResponse atualizar(Long id, DividaRequest request) {
+        Divida divida = findById(id);
+
+        if (request.descricao() != null) {
+            divida.setDescricao(request.descricao());
+        }
+
+        if (request.pessoaId() != null) {
+            Pessoa pessoa = pessoaRepository.findById(request.pessoaId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Pessoa", request.pessoaId()));
+            divida.setPessoa(pessoa);
+        } else if (request.pessoaId() == null) {
+            divida.setPessoa(null);
+        }
+
+        Categoria novaCategoria = null;
+        if (request.categoriaId() != null) {
+            novaCategoria = categoriaRepository.findById(request.categoriaId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
+            divida.setCategoria(novaCategoria);
+        } else {
+            divida.setCategoria(null);
+        }
+
+        // Propaga a categoria atualizada para todas as transações geradas por parcelas pagas desta dívida
+        List<ParcelaDivida> parcelas = parcelaRepository.findByDividaId(divida.getId());
+        for (ParcelaDivida pd : parcelas) {
+            if (pd.getTransacaoGerada() != null) {
+                Transacao t = pd.getTransacaoGerada();
+                t.setCategoria(novaCategoria);
+                transacaoRepository.save(t);
+            }
+        }
+
+        if (request.observacao() != null) {
+            divida.setObservacao(request.observacao());
+        }
+
+        if (request.diaVencimento() != null) {
+            divida.setDiaVencimento(request.diaVencimento());
+        }
+
+        if (request.dataFim() != null) {
+            divida.setDataFim(request.dataFim());
+        }
+
+        if (request.recorrente() != null) {
+            divida.setRecorrente(request.recorrente());
+        }
+
+        if (Boolean.TRUE.equals(divida.getRecorrente())) {
+            BigDecimal novoValorMensal = request.valorParcelaRecorrente() != null ? request.valorParcelaRecorrente() : request.valorTotal();
+            if (novoValorMensal != null && novoValorMensal.compareTo(BigDecimal.ZERO) > 0) {
+                divida.setValorParcelaRecorrente(novoValorMensal);
+                divida.setValorTotal(novoValorMensal);
+
+                // Propaga o novo valor mensal para todas as parcelas pendentes da dívida recorrente
+                for (ParcelaDivida pd : parcelas) {
+                    if (pd.getStatus() == StatusTransacao.PENDENTE) {
+                        pd.setValor(novoValorMensal);
+                        parcelaRepository.save(pd);
+                    }
+                }
+            }
+        }
+
+        dividaRepository.save(divida);
+        log.info("[tenant={}] Dívida atualizada: id={} categoria={} recorrente={}",
+                divida.getTenantId(), id, divida.getCategoria() != null ? divida.getCategoria().getNome() : "N/A", divida.getRecorrente());
+
+        return dividaMapper.toResponse(divida);
+    }
+
+    @Transactional
     public ParcelaDividaResponse pagarParcela(Long parcelaId, PagarParcelaDividaRequest request) {
         ParcelaDivida parcela = parcelaRepository.findById(parcelaId)
                 .orElseThrow(() -> new ResourceNotFoundException("Parcela da Dívida", parcelaId));
@@ -205,6 +285,8 @@ public class DividaService {
         if (request.categoriaId() != null) {
             categoria = categoriaRepository.findById(request.categoriaId())
                     .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
+        } else if (divida.getCategoria() != null) {
+            categoria = divida.getCategoria();
         }
 
         LocalDate dataPag = request.dataPagamento() != null ? request.dataPagamento() : LocalDate.now();
@@ -213,11 +295,8 @@ public class DividaService {
         if (valorPago.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException("Valor pago deve ser maior que zero.");
         }
-        if (valorPago.compareTo(parcela.getValor()) > 0) {
-            throw new BusinessException("O valor pago não pode ser maior que o saldo atual da parcela.");
-        }
 
-        // 1. Verificar se é parcial
+        // 1. Verificar se é parcial ou se tem excedente (pagamento a maior)
         ParcelaDivida novaParcelaPendente = null;
         if (valorPago.compareTo(parcela.getValor()) < 0) {
             BigDecimal saldoRestante = parcela.getValor().subtract(valorPago);
@@ -233,6 +312,31 @@ public class DividaService {
                     .dataVencimento(parcela.getDataVencimento())
                     .status(StatusTransacao.PENDENTE)
                     .build();
+        } else if (valorPago.compareTo(parcela.getValor()) > 0) {
+            BigDecimal excedente = valorPago.subtract(parcela.getValor());
+            
+            // Abater excedente de outras parcelas pendentes da dívida (próxima ou última)
+            String opcaoAbater = request.descontarExcedenteDe() != null ? request.descontarExcedenteDe() : "PROXIMA";
+            List<ParcelaDivida> pendentes = "ULTIMA".equalsIgnoreCase(opcaoAbater)
+                    ? parcelaRepository.findByDividaIdAndStatusOrderByDataVencimentoDesc(divida.getId(), StatusTransacao.PENDENTE)
+                    : parcelaRepository.findByDividaIdAndStatusOrderByDataVencimentoAsc(divida.getId(), StatusTransacao.PENDENTE);
+
+            BigDecimal saldoAbater = excedente;
+            for (ParcelaDivida p : pendentes) {
+                if (saldoAbater.compareTo(BigDecimal.ZERO) <= 0) break;
+                if (p.getId().equals(parcela.getId())) continue;
+
+                if (p.getValor().compareTo(saldoAbater) <= 0) {
+                    saldoAbater = saldoAbater.subtract(p.getValor());
+                    p.setValor(BigDecimal.ZERO);
+                    p.setStatus(StatusTransacao.PAGO);
+                    p.setDataPagamento(dataPag);
+                } else {
+                    p.setValor(p.getValor().subtract(saldoAbater));
+                    saldoAbater = BigDecimal.ZERO;
+                }
+                parcelaRepository.save(p);
+            }
         }
 
         // 2. Atualizar Parcela Atual
@@ -322,6 +426,8 @@ public class DividaService {
         if (request.categoriaId() != null) {
             categoria = categoriaRepository.findById(request.categoriaId())
                     .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
+        } else if (divida.getCategoria() != null) {
+            categoria = divida.getCategoria();
         }
 
         LocalDate dataPag = request.dataPagamento() != null ? request.dataPagamento() : LocalDate.now();
@@ -501,8 +607,10 @@ public class DividaService {
                     .build();
             divida.adicionarParcela(parcela);
 
-            // Atualizar valorTotal acumulado e valorRestante
-            divida.setValorTotal(divida.getValorTotal().add(valor));
+            // Para dívida recorrente, mantemos o valorTotal como o valor mensal recorrente
+            if (!Boolean.TRUE.equals(divida.getRecorrente())) {
+                divida.setValorTotal(divida.getValorTotal().add(valor));
+            }
             divida.setValorRestante(divida.getValorRestante().add(valor));
             // Garantir que o status volte para PENDENTE com a nova parcela
             divida.setStatus(StatusDivida.PENDENTE);
@@ -560,7 +668,9 @@ public class DividaService {
                     .build();
             divida.adicionarParcela(parcela);
 
-            divida.setValorTotal(divida.getValorTotal().add(valor));
+            if (!Boolean.TRUE.equals(divida.getRecorrente())) {
+                divida.setValorTotal(divida.getValorTotal().add(valor));
+            }
             divida.setValorRestante(divida.getValorRestante().add(valor));
             divida.setStatus(com.gestao.financeiro.entity.enums.StatusDivida.PENDENTE);
 

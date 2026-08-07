@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
@@ -61,6 +62,32 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
             @Param("busca") String busca,
             Pageable pageable);
 
+    @Query("""
+        SELECT DISTINCT t FROM Transacao t
+        LEFT JOIN FETCH t.categoria
+        LEFT JOIN FETCH t.usuario
+        JOIN t.lancamentos l
+        WHERE l.conta.id = :contaId
+          AND (CAST(:dataInicio AS LocalDate) IS NULL OR t.data >= :dataInicio)
+          AND (CAST(:dataFim AS LocalDate) IS NULL OR t.data <= :dataFim)
+          AND (CAST(:categoriaId AS long) IS NULL OR t.categoria.id = :categoriaId)
+          AND (:tipo IS NULL OR t.tipo = :tipo)
+          AND (:tipoDespesa IS NULL OR t.tipoDespesa = :tipoDespesa)
+          AND (:status IS NULL OR t.status = :status)
+          AND (:busca IS NULL OR LOWER(CAST(t.descricao AS string)) LIKE LOWER(CONCAT('%', CAST(:busca AS string), '%')))
+          AND t.deletedAt IS NULL
+        ORDER BY t.data DESC, t.id DESC
+    """)
+    List<Transacao> buscarTransacoesCartao(
+            @Param("dataInicio") LocalDate dataInicio,
+            @Param("dataFim") LocalDate dataFim,
+            @Param("categoriaId") Long categoriaId,
+            @Param("contaId") Long contaId,
+            @Param("tipo") TipoTransacao tipo,
+            @Param("tipoDespesa") TipoDespesa tipoDespesa,
+            @Param("status") StatusTransacao status,
+            @Param("busca") String busca);
+
     long countByTenantIdAndDataBetween(Long tenantId, LocalDate dataInicio, LocalDate dataFim);
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -80,12 +107,27 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
     """)
     List<Transacao> findUltimasTransacoes(@Param("tenantId") Long tenantId, Pageable pageable);
 
+    @Query("""
+        SELECT DISTINCT t FROM Transacao t
+        LEFT JOIN FETCH t.categoria
+        LEFT JOIN FETCH t.lancamentos l
+        LEFT JOIN FETCH l.conta
+        WHERE t.tenantId = :tenantId
+          AND t.deletedAt IS NULL
+          AND (:tipo IS NULL OR t.tipo = :tipo)
+          AND (CAST(:contaId AS long) IS NULL OR EXISTS (
+                SELECT l2 FROM Lancamento l2 WHERE l2.transacao = t AND l2.conta.id = :contaId
+          ))
+        ORDER BY t.createdAt DESC, t.id DESC
+    """)
+    List<Transacao> findUltimaTransacaoCadastrada(@Param("tenantId") Long tenantId, @Param("contaId") Long contaId, @Param("tipo") TipoTransacao tipo, Pageable pageable);
+
     // ─────────────────────────────────────────────────────────────────────────
     // Dashboard — próximos vencimentos até :dataLimite
     // ─────────────────────────────────────────────────────────────────────────
 
     @Query("""
-        SELECT DISTINCT t FROM Transacao t
+        SELECT t FROM Transacao t
         LEFT JOIN FETCH t.lancamentos l
         LEFT JOIN FETCH l.conta
         WHERE t.tenantId = :tenantId
@@ -93,10 +135,10 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
           AND t.deletedAt IS NULL
           AND (t.numeroParcelas IS NULL OR t.numeroParcelas <= 1)
           AND (
-               (t.data BETWEEN :inicio AND :dataLimite)
-               OR (t.data < :hoje AND t.status = 'PENDENTE')
+               (COALESCE(t.dataVencimento, t.data) BETWEEN :inicio AND :dataLimite)
+               OR (COALESCE(t.dataVencimento, t.data) < :hoje AND t.status = 'PENDENTE')
           )
-        ORDER BY t.data ASC
+        ORDER BY COALESCE(t.dataVencimento, t.data) ASC
     """)
     List<Transacao> findProximosVencimentos(
             @Param("tenantId") Long tenantId,
@@ -113,13 +155,44 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
         SELECT t FROM Transacao t
         LEFT JOIN FETCH t.categoria c
         LEFT JOIN FETCH c.categoriaPai cp
-        WHERE t.tipo = 'DESPESA'
+        WHERE t.tenantId = :tenantId
+          AND t.tipo = 'DESPESA'
           AND t.status = 'PAGO'
           AND t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL
         ORDER BY t.data DESC
     """)
     List<Transacao> findDespesasPagasByPeriodo(
+            @Param("tenantId") Long tenantId,
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    @Query("""
+        SELECT t FROM Transacao t
+        LEFT JOIN FETCH t.categoria c
+        LEFT JOIN FETCH c.categoriaPai cp
+        WHERE t.tenantId = :tenantId
+          AND t.tipo = 'RECEITA'
+          AND t.status = 'PAGO'
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL
+        ORDER BY t.data DESC
+    """)
+    List<Transacao> findReceitasPagasByPeriodo(
+            @Param("tenantId") Long tenantId,
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim);
+
+    @Query("""
+        SELECT COALESCE(SUM(t.valor), 0) FROM Transacao t
+        WHERE t.tenantId = :tenantId
+          AND t.tipo = 'RECEITA'
+          AND t.status = 'PAGO'
+          AND t.data BETWEEN :inicio AND :fim
+          AND t.deletedAt IS NULL
+    """)
+    BigDecimal somarReceitasPagasByPeriodo(
+            @Param("tenantId") Long tenantId,
             @Param("inicio") LocalDate inicio,
             @Param("fim") LocalDate fim);
 
@@ -129,15 +202,20 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
             t.categoria.nome AS nomeCategoria,
             CAST(EXTRACT(MONTH FROM t.data) AS int) AS mes,
             CAST(EXTRACT(YEAR FROM t.data) AS int) AS ano,
-            COALESCE(SUM(t.valor), 0) AS total
-        FROM Transacao t
+            COALESCE(SUM(l.valor), 0) AS total
+        FROM Lancamento l
+        JOIN l.transacao t
+        JOIN l.conta c
         WHERE t.tipo = 'DESPESA'
-          AND t.status = 'PAGO'
+          AND t.status <> 'CANCELADO'
+          AND l.direcao = 'DEBITO'
+          AND c.tipo <> com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO
           AND t.recorrenciaId IS NULL
           AND (t.tipoDespesa IS NULL OR t.tipoDespesa = 'VARIAVEL')
           AND t.data BETWEEN :inicio AND :fim
           AND t.deletedAt IS NULL
           AND t.categoria IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM ParcelaDivida pd WHERE pd.transacaoGerada = t)
         GROUP BY t.categoria.id, t.categoria.nome, EXTRACT(YEAR FROM t.data), EXTRACT(MONTH FROM t.data)
     """)
     List<com.gestao.financeiro.repository.projection.GastoMensalCategoriaProjection> somarGastosVariaveisMensaisPorCategoria(

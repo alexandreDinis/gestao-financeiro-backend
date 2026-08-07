@@ -1,6 +1,7 @@
 package com.gestao.financeiro.service;
 
 import com.gestao.financeiro.dto.response.RelatorioGastosMensaisResponse;
+import com.gestao.financeiro.dto.response.RelatorioReceitasMensaisResponse;
 import com.gestao.financeiro.dto.response.RelatorioGastosMensaisResponse.CategoriaGastoResponse;
 import com.gestao.financeiro.entity.*;
 import com.gestao.financeiro.entity.enums.*;
@@ -334,5 +335,32 @@ class RelatorioServiceTest {
         TenantContext.setTenantId(tenantId);
         RelatorioGastosMensaisResponse resultOriginal = relatorioService.gastosMensaisDetalhados(2026, 6);
         assertThat(resultOriginal.totalGeral()).isEqualByComparingTo(BigDecimal.valueOf(50));
+    }
+
+    @Test
+    void deveCalcularRelatorioReceitasMensaisComSucesso() {
+        Categoria catSalario = criarCategoria("Salário", TipoCategoria.RECEITA, null);
+        Categoria catFreelance = criarCategoria("Freelance", TipoCategoria.RECEITA, null);
+
+        // Receitas no mês 6 de 2026
+        criarTransacao("Salário Junho", BigDecimal.valueOf(5000), LocalDate.of(2026, 6, 5), TipoTransacao.RECEITA, StatusTransacao.PAGO, catSalario);
+        criarTransacao("Projeto Web", BigDecimal.valueOf(1500), LocalDate.of(2026, 6, 20), TipoTransacao.RECEITA, StatusTransacao.PAGO, catFreelance);
+
+        // Receita em outro mês (mês 1) do mesmo ano
+        criarTransacao("Salário Janeiro", BigDecimal.valueOf(5000), LocalDate.of(2026, 1, 5), TipoTransacao.RECEITA, StatusTransacao.PAGO, catSalario);
+
+        // Receita pendente (NÃO deve contar)
+        criarTransacao("Freelance Pendente", BigDecimal.valueOf(2000), LocalDate.of(2026, 6, 25), TipoTransacao.RECEITA, StatusTransacao.PENDENTE, catFreelance);
+
+        RelatorioReceitasMensaisResponse result = relatorioService.receitasMensaisDetalhadas(2026, 6);
+
+        assertThat(result.mes()).isEqualTo(6);
+        assertThat(result.ano()).isEqualTo(2026);
+        assertThat(result.totalMes()).isEqualByComparingTo(BigDecimal.valueOf(6500));
+        assertThat(result.totalAno()).isEqualByComparingTo(BigDecimal.valueOf(11500));
+        assertThat(result.mediaMensal()).isNotNull();
+        assertThat(result.categorias()).hasSize(2);
+        assertThat(result.categorias().get(0).nome()).isEqualTo("Salário");
+        assertThat(result.categorias().get(0).totalCategoria()).isEqualByComparingTo(BigDecimal.valueOf(5000));
     }
 }

@@ -202,4 +202,34 @@ class TransacaoRecorrenteServiceTest {
         // 3. Validar que apenas 1 transação foi criada, não 5
         assertThat(transacaoRepository.findByRecorrenciaId(recId)).hasSize(1);
     }
+
+    @Test
+    void devePropagarAtualizacaoParaTransacoesPendentes() {
+        // 1. Criar Recorrência com dia de vencimento 10
+        TransacaoRecorrenteRequest request = new TransacaoRecorrenteRequest(
+                "Conta de Luz Original", BigDecimal.valueOf(100.0), TipoTransacao.DESPESA,
+                Periodicidade.MENSAL, LocalDate.of(2026, 4, 10), null, 10, categoriaId, contaId, false
+        );
+        Long recId = transacaoRecorrenteService.criar(request).id();
+
+        // 2. Materializar transação pendente
+        List<Transacao> transacoes = transacaoRepository.findByRecorrenciaId(recId);
+        assertThat(transacoes).hasSize(1);
+        Transacao txPendente = transacoes.get(0);
+        assertThat(txPendente.getDataVencimento()).isEqualTo(LocalDate.of(2026, 4, 10));
+
+        // 3. Atualizar a Recorrência alterando dia de vencimento para 25 e valor para 120.0
+        TransacaoRecorrenteRequest updateRequest = new TransacaoRecorrenteRequest(
+                "Conta de Luz Atualizada", BigDecimal.valueOf(120.0), TipoTransacao.DESPESA,
+                Periodicidade.MENSAL, LocalDate.of(2026, 4, 25), null, 25, categoriaId, contaId, false
+        );
+        transacaoRecorrenteService.atualizar(recId, updateRequest);
+
+        // 4. Verificar se a transação pendente foi atualizada com o novo vencimento e valor
+        Transacao txAtualizada = transacaoRepository.findById(txPendente.getId()).orElseThrow();
+        assertThat(txAtualizada.getDataVencimento()).isEqualTo(LocalDate.of(2026, 4, 25));
+        assertThat(txAtualizada.getData()).isEqualTo(LocalDate.of(2026, 4, 25));
+        assertThat(txAtualizada.getValor()).isEqualByComparingTo(BigDecimal.valueOf(120.0));
+        assertThat(txAtualizada.getDescricao()).contains("Conta de Luz Atualizada");
+    }
 }

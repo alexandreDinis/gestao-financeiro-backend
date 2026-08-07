@@ -369,9 +369,10 @@ public class DashboardService {
         String conta = t.getLancamentos() != null && !t.getLancamentos().isEmpty()
                 ? t.getLancamentos().iterator().next().getConta().getNome() : "-";
 
-        int dias = (int) java.time.temporal.ChronoUnit.DAYS.between(hoje, t.getData());
-        boolean atrasado = t.getData().isBefore(hoje);
-        boolean venceHoje = t.getData().isEqual(hoje);
+        LocalDate dataVenc = t.getDataVencimento() != null ? t.getDataVencimento() : t.getData();
+        int dias = (int) java.time.temporal.ChronoUnit.DAYS.between(hoje, dataVenc);
+        boolean atrasado = dataVenc.isBefore(hoje);
+        boolean venceHoje = dataVenc.isEqual(hoje);
 
         return new Vencimento(
                 "TRANSACAO-" + t.getId(),
@@ -380,7 +381,7 @@ public class DashboardService {
                 t.getLancamentos() != null && !t.getLancamentos().isEmpty() ? t.getLancamentos().iterator().next().getConta().getId() : null,
                 t.getDescricao(),
                 t.getValor(),
-                t.getData(),
+                dataVenc,
                 dias,
                 conta,
                 com.gestao.financeiro.entity.enums.OrigemVencimento.TRANSACAO,
