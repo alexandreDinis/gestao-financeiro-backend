@@ -46,6 +46,13 @@ public class TransacaoController {
                 dataInicio, dataFim, categoriaId, contaId, tipo, tipoDespesa, status, geradoAutomaticamente, busca, pageable));
     }
 
+    @GetMapping("/ultima")
+    public ApiResponse<com.gestao.financeiro.dto.response.UltimaTransacaoResponse> buscarUltimaTransacao(
+            @RequestParam(required = false) Long contaId,
+            @RequestParam(required = false) TipoTransacao tipo) {
+        return ApiResponse.ok(transacaoService.buscarUltimaTransacao(contaId, tipo));
+    }
+
     @GetMapping("/{id}")
     public ApiResponse<TransacaoResponse> buscarPorId(@PathVariable Long id) {
         return ApiResponse.ok(transacaoService.buscarPorId(id));

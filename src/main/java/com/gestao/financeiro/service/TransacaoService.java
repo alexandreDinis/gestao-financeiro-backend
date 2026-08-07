@@ -23,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -239,6 +240,40 @@ public class TransacaoService {
 
     public TransacaoResponse buscarPorId(Long id) {
         return transacaoMapper.toResponse(findById(id));
+    }
+
+    public com.gestao.financeiro.dto.response.UltimaTransacaoResponse buscarUltimaTransacao(Long contaId, TipoTransacao tipo) {
+        Long tenantId = TenantContext.getTenantId();
+        List<Transacao> result = transacaoRepository.findUltimaTransacaoCadastrada(tenantId, contaId, tipo, PageRequest.of(0, 1));
+        if (result.isEmpty()) {
+            return null;
+        }
+
+        Transacao t = result.get(0);
+        String contaNome = null;
+        Long contaIdFound = null;
+        if (t.getLancamentos() != null && !t.getLancamentos().isEmpty()) {
+            var l = t.getLancamentos().get(0);
+            if (l.getConta() != null) {
+                contaNome = l.getConta().getNome();
+                contaIdFound = l.getConta().getId();
+            }
+        }
+
+        return new com.gestao.financeiro.dto.response.UltimaTransacaoResponse(
+                t.getId(),
+                t.getDescricao(),
+                t.getValor(),
+                t.getTipo(),
+                t.getStatus(),
+                t.getData(),
+                t.getCreatedAt(),
+                contaIdFound,
+                contaNome,
+                t.getCategoria() != null ? t.getCategoria().getId() : null,
+                t.getCategoria() != null ? t.getCategoria().getNome() : null,
+                t.getCategoria() != null ? t.getCategoria().getCor() : null
+        );
     }
 
     /**

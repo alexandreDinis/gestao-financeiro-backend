@@ -107,6 +107,21 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
     """)
     List<Transacao> findUltimasTransacoes(@Param("tenantId") Long tenantId, Pageable pageable);
 
+    @Query("""
+        SELECT DISTINCT t FROM Transacao t
+        LEFT JOIN FETCH t.categoria
+        LEFT JOIN FETCH t.lancamentos l
+        LEFT JOIN FETCH l.conta
+        WHERE t.tenantId = :tenantId
+          AND t.deletedAt IS NULL
+          AND (:tipo IS NULL OR t.tipo = :tipo)
+          AND (CAST(:contaId AS long) IS NULL OR EXISTS (
+                SELECT l2 FROM Lancamento l2 WHERE l2.transacao = t AND l2.conta.id = :contaId
+          ))
+        ORDER BY t.createdAt DESC, t.id DESC
+    """)
+    List<Transacao> findUltimaTransacaoCadastrada(@Param("tenantId") Long tenantId, @Param("contaId") Long contaId, @Param("tipo") TipoTransacao tipo, Pageable pageable);
+
     // ─────────────────────────────────────────────────────────────────────────
     // Dashboard — próximos vencimentos até :dataLimite
     // ─────────────────────────────────────────────────────────────────────────
