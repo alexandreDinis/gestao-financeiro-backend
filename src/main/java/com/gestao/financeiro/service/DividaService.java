@@ -234,7 +234,10 @@ public class DividaService {
             divida.setDiaVencimento(request.diaVencimento());
         }
 
-        if (request.dataFim() != null) {
+        // Para dívidas recorrentes, sempre atualiza dataFim (inclusive para null = indefinido)
+        if (Boolean.TRUE.equals(request.recorrente())) {
+            divida.setDataFim(request.dataFim());
+        } else if (request.dataFim() != null) {
             divida.setDataFim(request.dataFim());
         }
 
