@@ -86,17 +86,7 @@ public class PrevisaoCaixaService {
             List<ItemPrevisaoDetalhamentoDTO> detalhamentoReceitas = new java.util.ArrayList<>();
             List<ItemPrevisaoDetalhamentoDTO> detalhamentoDespesas = new java.util.ArrayList<>();
 
-            // 1. Faturas de cartão projetadas (somamos TODAS as parcelas que VENCEM no mês, mantendo a previsão fixa)
-            BigDecimal saidasCartao = nvl(parcelaRepository.somarTodasParcelasCartaoPorVencimento(inicio, fim));
-            List<com.gestao.financeiro.entity.Parcela> listParcelasCartao = parcelaRepository.findParcelasCartaoByPeriodo(tenantId, inicio, fim);
-            for (com.gestao.financeiro.entity.Parcela p : listParcelasCartao) {
-                String desc = p.getTransacao().getDescricao();
-                if (p.getTotalParcelas() != null && p.getTotalParcelas() > 1) {
-                    desc += " (" + p.getNumeroParcela() + "/" + p.getTotalParcelas() + ")";
-                }
-                desc += " [Cartão]";
-                detalhamentoDespesas.add(new ItemPrevisaoDetalhamentoDTO(desc, nvl(p.getValorParcela()), "CARTAO"));
-            }
+
 
             // 2. Dívidas entre Pessoas (considera TODAS as parcelas programadas do mês: PAGAS e PENDENTES)
             BigDecimal entradasDividas = nvl(parcelaDividaRepository.somarTodasParcelasPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_RECEBER));
@@ -150,11 +140,11 @@ public class PrevisaoCaixaService {
                     continue;
                 }
 
-                // Se a recorrência for em Cartão de Crédito, já está incluída na fatura do cartão (saidasCartao)
-                if (rec.getConta() != null && rec.getConta().getTipo() == com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO) {
+                // Respeitar data de fim da recorrência (ex: streaming cancelado)
+                if (rec.getDataFim() != null && YearMonth.from(rec.getDataFim()).isBefore(ref)) {
                     continue;
                 }
-                
+
                 BigDecimal valor = nvl(rec.getValor());
                 if (rec.getTipo() == com.gestao.financeiro.entity.enums.TipoTransacao.RECEITA) {
                     entradasRecorrente = entradasRecorrente.add(valor);
@@ -165,9 +155,9 @@ public class PrevisaoCaixaService {
                 }
             }
 
-            // O total de Receitas Fixas / Despesas Fixas considera APENAS o que está programado (Dívidas, Recorrências e Faturas)
+            // O total de Receitas Fixas / Despesas Fixas considera APENAS Recorrências + Dívidas
             BigDecimal receitasFixas = entradasRecorrente.add(entradasDividas);
-            BigDecimal despesasFixas = saidasCartao.add(saidasRecorrente).add(saidasDividas);
+            BigDecimal despesasFixas = saidasRecorrente.add(saidasDividas);
 
             log.info("[PrevisaoCaixa] Mes={}: entradasRecorrente={}, entradasDividas={}, receitasFixas={}",
                     ref, entradasRecorrente, entradasDividas, receitasFixas);
@@ -242,8 +232,6 @@ public class PrevisaoCaixaService {
             meses.add(current);
             current = current.plusMonths(1);
         }
-        int mesesReais = meses.size();
-        if (mesesReais == 0) mesesReais = 1;
 
         Map<YearMonth, BigDecimal> totaisPorMes = new HashMap<>();
         Map<Long, String> nomes = new HashMap<>();
@@ -257,29 +245,36 @@ public class PrevisaoCaixaService {
             somaPorCategoria.put(g.getCategoriaId(), somaPorCategoria.getOrDefault(g.getCategoriaId(), BigDecimal.ZERO).add(g.getTotal()));
         }
 
+        // Contar apenas meses que realmente possuem dados (gastos > 0)
+        int mesesComDados = 0;
         BigDecimal minGlobal = null;
         BigDecimal maxGlobal = null;
         BigDecimal somaGlobal = BigDecimal.ZERO;
 
         for (YearMonth ym : meses) {
             BigDecimal totalMes = totaisPorMes.getOrDefault(ym, BigDecimal.ZERO);
-            somaGlobal = somaGlobal.add(totalMes);
-            if (minGlobal == null || totalMes.compareTo(minGlobal) < 0) minGlobal = totalMes;
-            if (maxGlobal == null || totalMes.compareTo(maxGlobal) > 0) maxGlobal = totalMes;
+            if (totalMes.compareTo(BigDecimal.ZERO) > 0) {
+                mesesComDados++;
+                somaGlobal = somaGlobal.add(totalMes);
+                if (minGlobal == null || totalMes.compareTo(minGlobal) < 0) minGlobal = totalMes;
+                if (maxGlobal == null || totalMes.compareTo(maxGlobal) > 0) maxGlobal = totalMes;
+            }
         }
 
-        BigDecimal mediaGlobal = somaGlobal.divide(BigDecimal.valueOf(mesesReais), 2, RoundingMode.HALF_UP);
+        if (mesesComDados == 0) mesesComDados = 1;
         if (minGlobal == null) minGlobal = BigDecimal.ZERO;
         if (maxGlobal == null) maxGlobal = BigDecimal.ZERO;
 
+        BigDecimal mediaGlobal = somaGlobal.divide(BigDecimal.valueOf(mesesComDados), 2, RoundingMode.HALF_UP);
+
         List<EstimativaPorCategoriaDTO> categorias = new ArrayList<>();
         for (Map.Entry<Long, BigDecimal> entry : somaPorCategoria.entrySet()) {
-            BigDecimal mediaCat = entry.getValue().divide(BigDecimal.valueOf(mesesReais), 2, RoundingMode.HALF_UP);
+            BigDecimal mediaCat = entry.getValue().divide(BigDecimal.valueOf(mesesComDados), 2, RoundingMode.HALF_UP);
             categorias.add(new EstimativaPorCategoriaDTO(entry.getKey(), nomes.get(entry.getKey()), mediaCat));
         }
 
         categorias.sort((a, b) -> b.media().compareTo(a.media()));
 
-        return new EstimativaVariavelDTO(mediaGlobal, minGlobal, maxGlobal, mesesReais, categorias);
+        return new EstimativaVariavelDTO(mediaGlobal, minGlobal, maxGlobal, mesesComDados, categorias);
     }
 }
