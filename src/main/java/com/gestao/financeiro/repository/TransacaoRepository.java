@@ -29,6 +29,34 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
     @Query(value = "SELECT COUNT(*) > 0 FROM transacao WHERE recorrencia_id = :recorrenciaId AND referencia = :referencia", nativeQuery = true)
     boolean existsByRecorrenciaIdAndReferenciaIgnoreSoftDelete(@Param("recorrenciaId") Long recorrenciaId, @Param("referencia") String referencia);
 
+    /**
+     * Retorna os IDs de recorrências que já possuem transação PAGA para a referência informada.
+     * Usado pela previsão de caixa para evitar dupla contagem no mês corrente.
+     */
+    @Query("""
+        SELECT DISTINCT t.recorrenciaId
+        FROM Transacao t
+        WHERE t.recorrenciaId IS NOT NULL
+          AND t.referencia = :referencia
+          AND t.status = 'PAGO'
+          AND t.deletedAt IS NULL
+    """)
+    List<Long> findRecorrenciaIdsPagasPorReferencia(@Param("referencia") YearMonth referencia);
+
+    /**
+     * Retorna os IDs de recorrências que já possuem transação materializada (qualquer status) para a referência.
+     * Usado para saber se uma recorrência de cartão já gerou parcela para o mês.
+     */
+    @Query("""
+        SELECT DISTINCT t.recorrenciaId
+        FROM Transacao t
+        WHERE t.recorrenciaId IS NOT NULL
+          AND t.referencia = :referencia
+          AND t.deletedAt IS NULL
+          AND t.status <> 'CANCELADO'
+    """)
+    List<Long> findRecorrenciaIdsMaterializadasPorReferencia(@Param("referencia") YearMonth referencia);
+
     @Query("""
         SELECT t FROM Transacao t
         LEFT JOIN FETCH t.categoria
@@ -209,7 +237,6 @@ public interface TransacaoRepository extends JpaRepository<Transacao, Long> {
         WHERE t.tipo = 'DESPESA'
           AND t.status <> 'CANCELADO'
           AND l.direcao = 'DEBITO'
-          AND c.tipo <> com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO
           AND t.recorrenciaId IS NULL
           AND (t.tipoDespesa IS NULL OR t.tipoDespesa = 'VARIAVEL')
           AND t.data BETWEEN :inicio AND :fim
