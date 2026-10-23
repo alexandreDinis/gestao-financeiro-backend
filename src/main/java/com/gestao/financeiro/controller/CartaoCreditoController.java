@@ -59,6 +59,12 @@ public class CartaoCreditoController {
         return ApiResponse.created(cartaoService.comprar(request));
     }
 
+    @PutMapping("/compra/{transacaoId}")
+    public ApiResponse<FaturaCartaoResponse> atualizarCompra(@PathVariable Long transacaoId,
+                                                             @Valid @RequestBody CompraCartaoRequest request) {
+        return ApiResponse.ok(cartaoService.atualizarCompra(transacaoId, request));
+    }
+
     // ===== Faturas =====
 
     @GetMapping("/{cartaoId}/faturas")

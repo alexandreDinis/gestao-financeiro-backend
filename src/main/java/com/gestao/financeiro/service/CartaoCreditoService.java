@@ -169,38 +169,143 @@ public class CartaoCreditoService {
         transacao.addLancamento(debito);
         transacao = transacaoRepository.save(transacao);
 
-        // Distribui parcelas nas faturas
-        BigDecimal valorParcela = request.valor()
-                .divide(BigDecimal.valueOf(request.parcelas()), 2, RoundingMode.HALF_UP);
+        FaturaCartao primeiraFatura = distribuirParcelas(transacao, cartao, request.valor(), request.parcelas(), dataCompra);
+
+        log.info("[tenant={}] Compra parcelada: transacao={} valor={} parcelas={} cartao={}",
+                tenantId, transacao.getId(), request.valor(), request.parcelas(), cartao.getBandeira());
+
+        return toFaturaResponse(primeiraFatura);
+    }
+
+    /**
+     * Edita uma compra no cartão já existente.
+     * Remove as parcelas antigas das faturas e redistribui as novas parcelas,
+     * mantendo a MESMA transação (não cria uma nova).
+     */
+    @Transactional
+    public FaturaCartaoResponse atualizarCompra(Long transacaoId, CompraCartaoRequest request) {
+        Transacao transacao = transacaoRepository.findById(transacaoId)
+                .orElseThrow(() -> new ResourceNotFoundException("Transação", transacaoId));
+
+        if (transacao.getStatus() == StatusTransacao.CANCELADO) {
+            throw new BusinessException("Não é possível editar uma compra cancelada.");
+        }
+
+        CartaoCredito cartao = findCartaoById(request.cartaoId());
+        Categoria categoria = categoriaRepository.findById(request.categoriaId())
+                .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
+
+        // Não permite editar se alguma parcela já foi paga / está em fatura paga
+        removerParcelasDaCompra(transacao);
+
+        LocalDate dataCompra = request.data() != null ? request.data() : transacao.getData();
+
+        transacao.setDescricao(request.descricao());
+        transacao.setValor(request.valor());
+        transacao.setData(dataCompra);
+        transacao.setCategoria(categoria);
+        transacao.setNumeroParcelas(request.parcelas());
+        transacao.setObservacao(request.parcelas() + "x no cartão " + cartao.getBandeira());
+
+        // Atualiza o lançamento contábil (mantém um único DEBITO na conta do cartão)
+        if (transacao.getLancamentos().isEmpty()) {
+            transacao.addLancamento(Lancamento.builder()
+                    .conta(cartao.getConta())
+                    .valor(request.valor())
+                    .direcao(DirecaoLancamento.DEBITO)
+                    .descricao("Compra cartão: " + request.descricao())
+                    .build());
+        } else {
+            transacao.getLancamentos().forEach(l -> {
+                l.setConta(cartao.getConta());
+                l.setValor(request.valor());
+                l.setDescricao("Compra cartão: " + request.descricao());
+            });
+        }
+        transacao = transacaoRepository.save(transacao);
+
+        FaturaCartao primeiraFatura = distribuirParcelas(transacao, cartao, request.valor(), request.parcelas(), dataCompra);
+
+        log.info("[tenant={}] Compra no cartão editada: transacao={} valor={} parcelas={} cartao={}",
+                transacao.getTenantId(), transacao.getId(), request.valor(), request.parcelas(), cartao.getBandeira());
+
+        return toFaturaResponse(primeiraFatura);
+    }
+
+    /**
+     * Retorna o ID do cartão vinculado a uma conta (tipo CARTAO_CREDITO).
+     */
+    public Long buscarCartaoIdPorConta(Long contaId) {
+        return cartaoRepository.findByContaId(contaId)
+                .map(CartaoCredito::getId)
+                .orElseThrow(() -> new BusinessException("Cartão não encontrado para a conta id: " + contaId));
+    }
+
+    /**
+     * Remove todas as parcelas de uma compra, desvinculando-as das faturas e recalculando os totais.
+     * Lança exceção se alguma parcela já estiver paga ou em uma fatura já paga.
+     */
+    @Transactional
+    public void removerParcelasDaCompra(Transacao transacao) {
+        List<Parcela> parcelasAntigas = parcelaRepository.findByTransacaoId(transacao.getId());
+
+        boolean possuiParcelaPaga = parcelasAntigas.stream().anyMatch(p ->
+                Boolean.TRUE.equals(p.getPaga())
+                        || (p.getFatura() != null && p.getFatura().getStatus() == StatusFatura.PAGA));
+        if (possuiParcelaPaga) {
+            throw new BusinessException("Não é possível editar esta compra: há parcelas em fatura já paga.");
+        }
+
+        for (Parcela p : parcelasAntigas) {
+            FaturaCartao fatura = p.getFatura();
+            if (fatura != null) {
+                fatura.getParcelas().remove(p);
+                fatura.recalcularTotal();
+                faturaRepository.save(fatura);
+            }
+        }
+        parcelaRepository.deleteAll(parcelasAntigas);
+        parcelaRepository.flush();
+    }
+
+    /**
+     * Distribui as parcelas de uma compra nas faturas.
+     * Garante que cada parcela caia em uma fatura DIFERENTE e sequencial:
+     * se a fatura base estiver PAGA, todo o cronograma é deslocado (e não apenas a 1ª parcela),
+     * evitando que duas parcelas caiam na mesma fatura.
+     */
+    private FaturaCartao distribuirParcelas(Transacao transacao, CartaoCredito cartao,
+                                            BigDecimal valorTotal, int numParcelas, LocalDate dataCompra) {
+        BigDecimal valorParcela = valorTotal
+                .divide(BigDecimal.valueOf(numParcelas), 2, RoundingMode.HALF_UP);
+
+        LocalDate dataVencimentoBase = calcularDataVencimentoFatura(dataCompra, cartao.getDiaFechamento(), cartao.getDiaVencimento());
 
         FaturaCartao primeiraFatura = null;
+        java.time.YearMonth ultimaFatura = null;
 
-        for (int i = 0; i < request.parcelas(); i++) {
-            // Calcula o vencimento em que essa parcela cai (recalculando ciclo base e aplicando shift da parcela)
-            LocalDate dataVencimentoBase = calcularDataVencimentoFatura(dataCompra, cartao.getDiaFechamento(), cartao.getDiaVencimento());
-            LocalDate dataVencimentoParcela = dataVencimentoBase.plusMonths(i);
-            
-            // Garante dia válido no mês (ex: 31 em fevereiro)
-            dataVencimentoParcela = dataVencimentoParcela.withDayOfMonth(
-                    Math.min(cartao.getDiaVencimento(), dataVencimentoParcela.lengthOfMonth()));
-
-            int mesFatura = dataVencimentoParcela.getMonthValue();
-            int anoFatura = dataVencimentoParcela.getYear();
+        for (int i = 0; i < numParcelas; i++) {
+            java.time.YearMonth alvo = java.time.YearMonth.from(dataVencimentoBase.plusMonths(i));
+            // Nunca permite duas parcelas na mesma fatura: a próxima sempre vem depois da anterior
+            if (ultimaFatura != null && !alvo.isAfter(ultimaFatura)) {
+                alvo = ultimaFatura.plusMonths(1);
+            }
 
             // Identifica a fatura de destino (Respeitando Option A: Shift se PAGA)
-            FaturaCartao fatura = obterFaturaParaLancamento(cartao, mesFatura, anoFatura);
+            FaturaCartao fatura = obterFaturaParaLancamento(cartao, alvo.getMonthValue(), alvo.getYear());
+            ultimaFatura = java.time.YearMonth.of(fatura.getAnoReferencia(), fatura.getMesReferencia());
 
             // Ajusta última parcela para cobrir diferença de arredondamento
             BigDecimal valorEstaParcela = valorParcela;
-            if (i == request.parcelas() - 1) {
-                BigDecimal jaDistribuido = valorParcela.multiply(BigDecimal.valueOf(request.parcelas() - 1));
-                valorEstaParcela = request.valor().subtract(jaDistribuido);
+            if (i == numParcelas - 1) {
+                BigDecimal jaDistribuido = valorParcela.multiply(BigDecimal.valueOf(numParcelas - 1L));
+                valorEstaParcela = valorTotal.subtract(jaDistribuido);
             }
 
             Parcela parcela = Parcela.builder()
                     .transacao(transacao)
                     .numeroParcela(i + 1)
-                    .totalParcelas(request.parcelas())
+                    .totalParcelas(numParcelas)
                     .valorParcela(valorEstaParcela)
                     .dataVencimento(fatura.getDataVencimento())
                     .paga(false)
@@ -210,11 +315,7 @@ public class CartaoCreditoService {
 
             if (i == 0) primeiraFatura = fatura;
         }
-
-        log.info("[tenant={}] Compra parcelada: transacao={} valor={} parcelas={} cartao={}",
-                tenantId, transacao.getId(), request.valor(), request.parcelas(), cartao.getBandeira());
-
-        return toFaturaResponse(primeiraFatura);
+        return primeiraFatura;
     }
 
     // ========================= FATURA =========================

@@ -45,7 +45,8 @@ public class TransacaoMapper {
                 entity.getGeradoAutomaticamente(),
                 entity.getRecorrenciaId(),
                 entity.getValorPrevisto(),
-                entity.getCreatedAt()
+                entity.getCreatedAt(),
+                entity.getNumeroParcelas()
         );
     }
 

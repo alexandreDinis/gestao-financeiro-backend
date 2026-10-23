@@ -422,6 +422,32 @@ public class TransacaoService {
             throw new BusinessException("Não é possível editar uma transação paga ou cancelada.");
         }
 
+        // Compras no cartão: parcelas precisam ser redistribuídas nas faturas
+        if (request.contaOrigemId() != null && transacao.getTipo() == TipoTransacao.DESPESA) {
+            Conta contaDestinoEdicao = contaRepository.findById(request.contaOrigemId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Conta", request.contaOrigemId()));
+
+            if (contaDestinoEdicao.getTipo() == com.gestao.financeiro.entity.enums.TipoConta.CARTAO_CREDITO) {
+                Long categoriaId = request.categoriaId() != null ? request.categoriaId()
+                        : (transacao.getCategoria() != null ? transacao.getCategoria().getId() : null);
+                if (categoriaId == null) {
+                    throw new BusinessException("Categoria é obrigatória para compras no cartão.");
+                }
+                int parcelas = transacao.getNumeroParcelas() != null && transacao.getNumeroParcelas() > 0
+                        ? transacao.getNumeroParcelas() : 1;
+                cartaoCreditoService.atualizarCompra(id, new com.gestao.financeiro.dto.request.CompraCartaoRequest(
+                        cartaoCreditoService.buscarCartaoIdPorConta(contaDestinoEdicao.getId()),
+                        categoriaId, request.descricao(), request.valor(), parcelas, request.data()));
+                return transacaoMapper.toResponse(findById(id));
+            }
+
+            // Saiu do cartão para outra conta: remove as parcelas das faturas
+            if (!parcelaRepository.findByTransacaoId(id).isEmpty()) {
+                cartaoCreditoService.removerParcelasDaCompra(transacao);
+                transacao.setNumeroParcelas(1);
+            }
+        }
+
         // Atualiza campos permitidos
         transacao.setDescricao(request.descricao());
         transacao.setValor(request.valor());
