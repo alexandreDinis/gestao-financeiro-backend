@@ -24,5 +24,6 @@ public record TransacaoResponse(
         Boolean geradoAutomaticamente,
         Long recorrenciaId,
         BigDecimal valorPrevisto,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        Integer numeroParcelas
 ) {}
