@@ -1,5 +1,6 @@
 package com.gestao.financeiro.entity;
 
+import com.gestao.financeiro.entity.enums.ModalidadeDivida;
 import com.gestao.financeiro.entity.enums.Periodicidade;
 import com.gestao.financeiro.entity.enums.StatusDivida;
 import com.gestao.financeiro.entity.enums.TipoDivida;
@@ -42,6 +43,14 @@ public class Divida extends TenantEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private TipoDivida tipo;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    @Builder.Default
+    private ModalidadeDivida modalidade = ModalidadeDivida.EMPRESTIMO;
+
+    @Column(length = 120)
+    private String credor;
 
     @Column(name = "valor_total", nullable = false, precision = 19, scale = 2)
     private BigDecimal valorTotal;

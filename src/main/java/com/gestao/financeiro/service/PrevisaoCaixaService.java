@@ -77,6 +77,14 @@ public class PrevisaoCaixaService {
 
         List<TransacaoRecorrente> recorrencias = transacaoRecorrenteRepository.findByAtivaTrueAndTenantId(tenantId);
         List<com.gestao.financeiro.entity.Divida> dividasRecorrentes = dividaRepository.findByRecorrenteTrue();
+        List<com.gestao.financeiro.entity.Divida> dividasSaldoAberto = dividaRepository.findByModalidadeAndStatusNot(
+                com.gestao.financeiro.entity.enums.ModalidadeDivida.SALDO_ABERTO,
+                com.gestao.financeiro.entity.enums.StatusDivida.PAGA
+        );
+        java.util.Map<Long, BigDecimal> saldoAbertoRestanteMap = new java.util.HashMap<>();
+        for (com.gestao.financeiro.entity.Divida d : dividasSaldoAberto) {
+            saldoAbertoRestanteMap.put(d.getId(), nvl(d.getValorRestante()));
+        }
 
         for (int i = 0; i < mesesParaFrente; i++) {
             YearMonth ref = mesAtual.plusMonths(i);
@@ -127,6 +135,30 @@ public class PrevisaoCaixaService {
                         saidasDividas = saidasDividas.add(valor);
                         detalhamentoDespesas.add(new ItemPrevisaoDetalhamentoDTO(d.getDescricao() + " [Recorrente]", valor, "DIVIDA"));
                     }
+                }
+            }
+
+            // 2c. Projeta dívidas SALDO_ABERTO com parcela mensal de referência até esgotar o valorRestante
+            for (com.gestao.financeiro.entity.Divida d : dividasSaldoAberto) {
+                BigDecimal restante = saldoAbertoRestanteMap.getOrDefault(d.getId(), BigDecimal.ZERO);
+                BigDecimal refMensal = nvl(d.getValorParcelaRecorrente());
+                if (restante.compareTo(BigDecimal.ZERO) <= 0 || refMensal.compareTo(BigDecimal.ZERO) <= 0) continue;
+                if (d.getDataInicio() != null && YearMonth.from(d.getDataInicio()).isAfter(ref)) continue;
+
+                boolean jaPagouNesteMes = listDividasReceber.stream().anyMatch(p -> p.getDivida().getId().equals(d.getId())) ||
+                                          listDividasPagar.stream().anyMatch(p -> p.getDivida().getId().equals(d.getId()));
+                if (jaPagouNesteMes) continue;
+
+                BigDecimal valorProjetado = restante.min(refMensal);
+                saldoAbertoRestanteMap.put(d.getId(), restante.subtract(valorProjetado));
+
+                if (d.getTipo() == TipoDivida.A_RECEBER) {
+                    entradasDividas = entradasDividas.add(valorProjetado);
+                    String pessoaNome = d.getPessoa() != null ? d.getPessoa().getNome() : "Pessoa";
+                    detalhamentoReceitas.add(new ItemPrevisaoDetalhamentoDTO(pessoaNome + " - " + d.getDescricao() + " [Saldo Aberto]", valorProjetado, "DIVIDA"));
+                } else if (d.getTipo() == TipoDivida.A_PAGAR) {
+                    saidasDividas = saidasDividas.add(valorProjetado);
+                    detalhamentoDespesas.add(new ItemPrevisaoDetalhamentoDTO(d.getDescricao() + " [Saldo Aberto]", valorProjetado, "DIVIDA"));
                 }
             }
 

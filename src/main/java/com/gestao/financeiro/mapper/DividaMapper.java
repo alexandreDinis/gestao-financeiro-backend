@@ -5,6 +5,7 @@ import com.gestao.financeiro.dto.response.DividaResponse;
 import com.gestao.financeiro.dto.response.ParcelaDividaResponse;
 import com.gestao.financeiro.entity.Divida;
 import com.gestao.financeiro.entity.ParcelaDivida;
+import com.gestao.financeiro.entity.enums.ModalidadeDivida;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -21,11 +22,11 @@ public class DividaMapper {
         List<ParcelaDividaResponse> parcelas = entity.getParcelas().stream()
                 .filter(p -> {
                     if (ano != null) {
-                        if (p.getDataVencimento().getYear() != (int)ano || (mes != null && p.getDataVencimento().getMonthValue() != (int)mes)) {
+                        if (p.getDataVencimento().getYear() != (int) ano || (mes != null && p.getDataVencimento().getMonthValue() != (int) mes)) {
                             return false;
                         }
                     }
-                    
+
                     if (status != null) {
                         if (status == com.gestao.financeiro.entity.enums.StatusDivida.PENDENTE) {
                             return p.getStatus() != com.gestao.financeiro.entity.enums.StatusTransacao.PAGO;
@@ -35,7 +36,7 @@ public class DividaMapper {
                             return p.getStatus() == com.gestao.financeiro.entity.enums.StatusTransacao.ATRASADO;
                         }
                     }
-                    
+
                     return true;
                 })
                 .map(this::toParcelaResponse)
@@ -52,6 +53,9 @@ public class DividaMapper {
         }
 
         BigDecimal valorTotal = isRecorrente && valorParcelaRecorrente != null ? valorParcelaRecorrente : entity.getValorTotal();
+        ModalidadeDivida modalidade = entity.getModalidade() != null
+                ? entity.getModalidade()
+                : (entity.getPessoa() != null ? ModalidadeDivida.EMPRESTIMO : ModalidadeDivida.BOLETO);
 
         return new DividaResponse(
                 entity.getId(),
@@ -62,6 +66,8 @@ public class DividaMapper {
                 entity.getCategoria() != null ? entity.getCategoria().getCor() : null,
                 entity.getDescricao(),
                 entity.getTipo(),
+                modalidade,
+                entity.getCredor(),
                 valorTotal,
                 entity.getValorRestante(),
                 entity.getDataInicio(),
@@ -91,14 +97,23 @@ public class DividaMapper {
                 entity.getDataVencimento(),
                 entity.getStatus(),
                 entity.getDataPagamento(),
-                entity.getTransacaoGerada() != null ? entity.getTransacaoGerada().getId() : null
+                entity.getTransacaoGerada() != null ? entity.getTransacaoGerada().getId() : null,
+                entity.getLinhaDigitavel(),
+                entity.getValorJuros() != null ? entity.getValorJuros() : BigDecimal.ZERO,
+                entity.getValorDesconto() != null ? entity.getValorDesconto() : BigDecimal.ZERO
         );
     }
 
     public Divida toEntity(DividaRequest request) {
+        ModalidadeDivida modalidade = request.modalidade() != null
+                ? request.modalidade()
+                : (request.pessoaId() != null ? ModalidadeDivida.EMPRESTIMO : ModalidadeDivida.BOLETO);
+
         return Divida.builder()
                 .descricao(request.descricao())
                 .tipo(request.tipo())
+                .modalidade(modalidade)
+                .credor(request.credor() != null && !request.credor().isBlank() ? request.credor().trim() : null)
                 .valorTotal(request.valorTotal())
                 .valorRestante(request.valorTotal())
                 .dataInicio(request.dataInicio())
@@ -111,4 +126,3 @@ public class DividaMapper {
                 .build();
     }
 }
-
