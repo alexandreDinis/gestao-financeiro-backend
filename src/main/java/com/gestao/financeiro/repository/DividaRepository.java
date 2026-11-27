@@ -26,6 +26,9 @@ public interface DividaRepository extends JpaRepository<Divida, Long> {
     @EntityGraph(attributePaths = {"pessoa", "parcelas"})
     List<Divida> findByModalidadeAndStatusNot(ModalidadeDivida modalidade, StatusDivida status);
 
+    @EntityGraph(attributePaths = {"parcelas"})
+    List<Divida> findByPausarPrevisaoTrue();
+
     @Query("""
         SELECT DISTINCT d FROM Divida d
         LEFT JOIN FETCH d.pessoa

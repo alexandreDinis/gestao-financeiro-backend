@@ -80,7 +80,8 @@ public class DividaMapper {
                 entity.getRecorrente(),
                 entity.getPeriodicidade(),
                 entity.getDiaVencimento(),
-                valorParcelaRecorrente
+                valorParcelaRecorrente,
+                Boolean.TRUE.equals(entity.getPausarPrevisao())
         );
     }
 

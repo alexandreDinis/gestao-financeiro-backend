@@ -109,7 +109,9 @@ public record DashboardResponse(
             com.gestao.financeiro.entity.enums.TipoMovimentacao tipo,
             boolean atrasado,
             boolean venceHoje,
-            BigDecimal valorPrevisto
+            BigDecimal valorPrevisto,
+            Long dividaId,
+            Boolean pausarPrevisao
     ) {}
 
     public record ResumoMeta(

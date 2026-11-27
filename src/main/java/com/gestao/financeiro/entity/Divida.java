@@ -86,6 +86,10 @@ public class Divida extends TenantEntity {
     @Column(name = "valor_parcela_recorrente", precision = 19, scale = 2)
     private BigDecimal valorParcelaRecorrente;
 
+    @Column(name = "pausar_previsao", nullable = false)
+    @Builder.Default
+    private Boolean pausarPrevisao = false;
+
     // ─── Parcelas ───────────────────────────────────────────────
     @OneToMany(mappedBy = "divida", cascade = CascadeType.ALL)
     @Builder.Default
