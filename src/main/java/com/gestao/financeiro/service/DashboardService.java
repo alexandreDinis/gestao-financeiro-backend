@@ -52,6 +52,7 @@ public class DashboardService {
     private final TransacaoRecorrenteService transacaoRecorrenteService;
     private final ParcelaDividaRepository parcelaDividaRepository;
     private final ParcelaRepository parcelaRepository;
+    private final DividaRepository dividaRepository;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Ponto de entrada
@@ -336,8 +337,12 @@ public class DashboardService {
         // 5. Buscar projeções de recorrências (NEW - Impact Based)
         List<Vencimento> projecoes = projectRecurrences(tenantId, hojeBr, limite, hojeBr);
 
+        // 6. Buscar projeções mensais de dívidas SALDO_ABERTO (amortização livre)
+        List<Vencimento> projecoesSaldoAberto = projectSaldoAberto(hojeBr.withDayOfMonth(1), limite, hojeBr);
+
         List<Vencimento> rawList = new ArrayList<>();
         rawList.addAll(projecoes);
+        rawList.addAll(projecoesSaldoAberto);
 
         // Mapear transações: Manter todas, o consolidate cuidará do filtro
         transacoes.forEach(t -> rawList.add(mapTransacaoToVencimento(t, hojeBr)));
@@ -493,6 +498,9 @@ public class DashboardService {
         // 4. Buscar projeções de recorrências (NEW)
         List<Vencimento> projecoes = projectRecurrences(tenantId, inicio, limite, hojeBr);
 
+        // 5. Buscar projeções mensais de dívidas SALDO_ABERTO
+        List<Vencimento> projecoesSaldoAberto = projectSaldoAberto(inicio, limite, hojeBr);
+
         // Faturas: filtrar pelo mês/ano de referência (Incluindo ABERTAS com valor)
         List<FaturaCartao> faturasPendentes;
         List<StatusFatura> statusInteresse = List.of(StatusFatura.ABERTA, StatusFatura.FECHADA, StatusFatura.ATRASADA);
@@ -519,12 +527,100 @@ public class DashboardService {
         parcelasDivida.forEach(p -> rawList.add(mapParcelaDividaToVencimento(p, hojeBr)));
         faturasPendentes.forEach(f -> rawList.add(mapFaturaToVencimento(f, hojeBr)));
         rawList.addAll(projecoes);
+        rawList.addAll(projecoesSaldoAberto);
 
         List<Vencimento> todos = consolidateVencimentos(rawList, tenantId, hojeBr);
 
         todos.sort(Comparator.comparing(Vencimento::dataVencimento));
         
         return todos;
+    }
+
+    /**
+     * Projeta vencimentos virtuais mensais para dívidas SALDO_ABERTO com parcela mensal de referência.
+     * Suporta múltiplos pagamentos no mesmo mês: desconta o que já foi amortizado naquele mês da meta mensal.
+     */
+    private List<Vencimento> projectSaldoAberto(LocalDate inicio, LocalDate limite, LocalDate hoje) {
+        List<Divida> dividas = dividaRepository.findByModalidadeAndStatusNot(
+                com.gestao.financeiro.entity.enums.ModalidadeDivida.SALDO_ABERTO,
+                com.gestao.financeiro.entity.enums.StatusDivida.PAGA
+        );
+        if (dividas.isEmpty()) return List.of();
+
+        List<Vencimento> result = new ArrayList<>();
+        YearMonth ymStart = YearMonth.from(inicio);
+        YearMonth ymEnd = YearMonth.from(limite);
+
+        for (Divida d : dividas) {
+            BigDecimal restante = d.getValorRestante() != null ? d.getValorRestante() : BigDecimal.ZERO;
+            BigDecimal refMensal = d.getValorParcelaRecorrente() != null ? d.getValorParcelaRecorrente() : BigDecimal.ZERO;
+            if (restante.compareTo(BigDecimal.ZERO) <= 0 || refMensal.compareTo(BigDecimal.ZERO) <= 0) continue;
+
+            int diaBase = d.getDiaVencimento() != null
+                    ? d.getDiaVencimento()
+                    : (d.getDataInicio() != null ? d.getDataInicio().getDayOfMonth() : 10);
+
+            YearMonth cur = ymStart;
+            while (!cur.isAfter(ymEnd)) {
+                int diaMes = Math.min(diaBase, cur.lengthOfMonth());
+                LocalDate dataVenc = cur.atDay(diaMes);
+
+                if (d.getDataInicio() != null && dataVenc.isBefore(d.getDataInicio())) {
+                    cur = cur.plusMonths(1);
+                    continue;
+                }
+                if (dataVenc.isBefore(inicio) || dataVenc.isAfter(limite)) {
+                    cur = cur.plusMonths(1);
+                    continue;
+                }
+
+                // Soma tudo que já foi pago/amortizado desta dívida neste mês (suporta 2+ pagamentos no mesmo mês)
+                final YearMonth targetYm = cur;
+                BigDecimal pagoNoMes = d.getParcelas().stream()
+                        .filter(p -> p.getStatus() == com.gestao.financeiro.entity.enums.StatusTransacao.PAGO)
+                        .filter(p -> {
+                            LocalDate refDate = p.getDataPagamento() != null ? p.getDataPagamento() : p.getDataVencimento();
+                            return refDate != null && YearMonth.from(refDate).equals(targetYm);
+                        })
+                        .map(ParcelaDivida::getValor)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                // Se já atingiu a meta mensal (ou já quitou o saldo), não gera pendência para este mês
+                BigDecimal metaDoMes = refMensal.min(restante.add(pagoNoMes));
+                BigDecimal faltaNoMes = metaDoMes.subtract(pagoNoMes);
+
+                if (faltaNoMes.compareTo(BigDecimal.ZERO) > 0) {
+                    int dias = (int) java.time.temporal.ChronoUnit.DAYS.between(hoje, dataVenc);
+                    boolean atrasado = dataVenc.isBefore(hoje);
+                    boolean venceHoje = dataVenc.isEqual(hoje);
+                    String pessoaNome = d.getPessoa() != null ? d.getPessoa().getNome() : (d.getCredor() != null ? d.getCredor() : "Saldo Aberto");
+                    String sufixo = pagoNoMes.compareTo(BigDecimal.ZERO) > 0 ? " (Restante no mês)" : " (Saldo Aberto)";
+
+                    result.add(new Vencimento(
+                            "SALDO-ABERTO-" + d.getId() + "-" + cur,
+                            null,
+                            d.getId(),
+                            null,
+                            pessoaNome + " - " + d.getDescricao() + sufixo,
+                            faltaNoMes,
+                            dataVenc,
+                            dias,
+                            pessoaNome,
+                            com.gestao.financeiro.entity.enums.OrigemVencimento.PARCELA,
+                            d.getTipo() == TipoDivida.A_RECEBER
+                                    ? com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA
+                                    : com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
+                            atrasado,
+                            venceHoje,
+                            refMensal
+                    ));
+                }
+
+                cur = cur.plusMonths(1);
+            }
+        }
+
+        return result;
     }
 
     /**

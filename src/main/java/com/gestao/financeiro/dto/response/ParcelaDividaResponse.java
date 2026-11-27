@@ -14,5 +14,8 @@ public record ParcelaDividaResponse(
         LocalDate dataVencimento,
         StatusTransacao status,
         LocalDate dataPagamento,
-        Long transacaoGeradaId
+        Long transacaoGeradaId,
+        String linhaDigitavel,
+        BigDecimal valorJuros,
+        BigDecimal valorDesconto
 ) {}

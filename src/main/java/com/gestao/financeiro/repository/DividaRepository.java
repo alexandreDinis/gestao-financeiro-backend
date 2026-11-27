@@ -1,6 +1,8 @@
 package com.gestao.financeiro.repository;
 
 import com.gestao.financeiro.entity.Divida;
+import com.gestao.financeiro.entity.enums.ModalidadeDivida;
+import com.gestao.financeiro.entity.enums.StatusDivida;
 import com.gestao.financeiro.entity.enums.TipoDivida;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -20,6 +22,9 @@ public interface DividaRepository extends JpaRepository<Divida, Long> {
 
     @EntityGraph(attributePaths = {"pessoa", "parcelas"})
     List<Divida> findByRecorrenteTrue();
+
+    @EntityGraph(attributePaths = {"pessoa", "parcelas"})
+    List<Divida> findByModalidadeAndStatusNot(ModalidadeDivida modalidade, StatusDivida status);
 
     @Query("""
         SELECT DISTINCT d FROM Divida d
