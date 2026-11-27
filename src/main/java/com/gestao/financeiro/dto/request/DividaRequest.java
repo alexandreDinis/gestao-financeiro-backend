@@ -1,5 +1,6 @@
 package com.gestao.financeiro.dto.request;
 
+import com.gestao.financeiro.entity.enums.ModalidadeDivida;
 import com.gestao.financeiro.entity.enums.Periodicidade;
 import com.gestao.financeiro.entity.enums.TipoDivida;
 import jakarta.validation.constraints.NotBlank;
@@ -18,6 +19,12 @@ public record DividaRequest(
 
         @NotNull(message = "Tipo de dívida é obrigatória")
         TipoDivida tipo,
+
+        ModalidadeDivida modalidade,
+
+        String credor,
+
+        String linhaDigitavelInicial,
 
         @NotNull(message = "Valor total é obrigatório")
         @Positive(message = "Valor total deve ser positivo")
@@ -38,4 +45,3 @@ public record DividaRequest(
         Integer diaVencimento,
         BigDecimal valorParcelaRecorrente
 ) {}
-

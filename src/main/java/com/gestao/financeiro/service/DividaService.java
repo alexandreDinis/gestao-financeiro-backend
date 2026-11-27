@@ -133,8 +133,13 @@ public class DividaService {
         }
 
         boolean isRecorrente = Boolean.TRUE.equals(request.recorrente());
+        boolean isSaldoAberto = divida.getModalidade() == ModalidadeDivida.SALDO_ABERTO;
 
-        if (isRecorrente) {
+        if (isSaldoAberto) {
+            // Amortização livre (conta-corrente): não gera parcelas fixas pendentes.
+            // Cada pagamento futuro será registrado como uma linha de extrato via registrarAmortizacao.
+            divida.setRecorrente(false);
+        } else if (isRecorrente) {
             // Dívida recorrente: gera primeira parcela se data de início já passou ou é hoje
             BigDecimal valorParcela = request.valorParcelaRecorrente() != null
                     ? request.valorParcelaRecorrente()
@@ -154,6 +159,8 @@ public class DividaService {
                         .numeroParcela(1)
                         .valor(valorParcela)
                         .dataVencimento(vencimento)
+                        .linhaDigitavel(request.linhaDigitavelInicial() != null && !request.linhaDigitavelInicial().isBlank()
+                                ? request.linhaDigitavelInicial().trim() : null)
                         .build();
                 divida.adicionarParcela(parcela);
             }
@@ -179,6 +186,8 @@ public class DividaService {
                         .numeroParcela(i + 1)
                         .valor(valorEstaParcela)
                         .dataVencimento(vencimento)
+                        .linhaDigitavel(i == 0 && request.linhaDigitavelInicial() != null && !request.linhaDigitavelInicial().isBlank()
+                                ? request.linhaDigitavelInicial().trim() : null)
                         .build();
                 divida.adicionarParcela(parcela);
             }
@@ -197,6 +206,14 @@ public class DividaService {
 
         if (request.descricao() != null) {
             divida.setDescricao(request.descricao());
+        }
+
+        if (request.modalidade() != null) {
+            divida.setModalidade(request.modalidade());
+        }
+
+        if (request.credor() != null) {
+            divida.setCredor(request.credor().isBlank() ? null : request.credor().trim());
         }
 
         if (request.pessoaId() != null) {
@@ -294,14 +311,38 @@ public class DividaService {
 
         LocalDate dataPag = request.dataPagamento() != null ? request.dataPagamento() : LocalDate.now();
 
-        BigDecimal valorPago = request.valorPago() != null ? request.valorPago() : parcela.getValor();
-        if (valorPago.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new BusinessException("Valor pago deve ser maior que zero.");
+        BigDecimal valorJuros = request.valorJuros() != null ? request.valorJuros() : BigDecimal.ZERO;
+        BigDecimal valorDesconto = request.valorDesconto() != null ? request.valorDesconto() : BigDecimal.ZERO;
+        boolean usaJurosOuDesconto = valorJuros.compareTo(BigDecimal.ZERO) > 0 || valorDesconto.compareTo(BigDecimal.ZERO) > 0;
+
+        if (request.linhaDigitavel() != null && !request.linhaDigitavel().isBlank()) {
+            parcela.setLinhaDigitavel(request.linhaDigitavel().trim());
         }
 
-        // 1. Verificar se é parcial ou se tem excedente (pagamento a maior)
+        BigDecimal valorOriginalParcela = parcela.getValor();
+        BigDecimal valorPago;
+        BigDecimal valorAbaterDivida;
+
+        if (usaJurosOuDesconto) {
+            // Modo Boleto/Financiamento com juros/multa ou desconto: quita a parcela integral sem distorcer parcelas futuras
+            valorPago = valorOriginalParcela.add(valorJuros).subtract(valorDesconto);
+            if (valorPago.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new BusinessException("O valor final após desconto deve ser maior que zero.");
+            }
+            parcela.setValorJuros(valorJuros);
+            parcela.setValorDesconto(valorDesconto);
+            valorAbaterDivida = valorOriginalParcela;
+        } else {
+            valorPago = request.valorPago() != null ? request.valorPago() : valorOriginalParcela;
+            if (valorPago.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new BusinessException("Valor pago deve ser maior que zero.");
+            }
+            valorAbaterDivida = valorPago;
+        }
+
+        // 1. Verificar se é parcial ou se tem excedente (apenas quando não usa juros/desconto explícito)
         ParcelaDivida novaParcelaPendente = null;
-        if (valorPago.compareTo(parcela.getValor()) < 0) {
+        if (!usaJurosOuDesconto && valorPago.compareTo(parcela.getValor()) < 0) {
             BigDecimal saldoRestante = parcela.getValor().subtract(valorPago);
             
             // Reduz o valor da parcela atual para o que foi pago
@@ -315,7 +356,7 @@ public class DividaService {
                     .dataVencimento(parcela.getDataVencimento())
                     .status(StatusTransacao.PENDENTE)
                     .build();
-        } else if (valorPago.compareTo(parcela.getValor()) > 0) {
+        } else if (!usaJurosOuDesconto && valorPago.compareTo(parcela.getValor()) > 0) {
             BigDecimal excedente = valorPago.subtract(parcela.getValor());
             
             // Abater excedente de outras parcelas pendentes da dívida (próxima ou última)
@@ -383,7 +424,7 @@ public class DividaService {
         }
 
         // 5. Abater Dívida (saldoRestante)
-        divida.abaterValor(valorPago);
+        divida.abaterValor(valorAbaterDivida);
         
         if (novaParcelaPendente != null) {
             divida.adicionarParcela(novaParcelaPendente);
@@ -394,6 +435,96 @@ public class DividaService {
         
         // Refresh to get actual generated transacao mapping
         return dividaMapper.toParcelaResponse(parcela);
+    }
+
+    @Transactional
+    public ParcelaDividaResponse atualizarLinhaDigitavel(Long parcelaId, String linhaDigitavel) {
+        ParcelaDivida parcela = parcelaRepository.findById(parcelaId)
+                .orElseThrow(() -> new ResourceNotFoundException("Parcela da Dívida", parcelaId));
+        parcela.setLinhaDigitavel(linhaDigitavel != null && !linhaDigitavel.isBlank() ? linhaDigitavel.trim() : null);
+        parcela = parcelaRepository.save(parcela);
+        return dividaMapper.toParcelaResponse(parcela);
+    }
+
+    @Transactional
+    public ParcelaDividaResponse registrarAmortizacao(Long dividaId, PagarParcelaDividaRequest request) {
+        Divida divida = findById(dividaId);
+
+        if (divida.getStatus() == StatusDivida.PAGA || divida.getValorRestante().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("Esta dívida já está quitada.");
+        }
+        if (request.contaId() == null) {
+            throw new BusinessException("Conta é obrigatória.");
+        }
+        if (request.valorPago() == null || request.valorPago().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("O valor da amortização deve ser maior que zero.");
+        }
+
+        Conta conta = contaRepository.findById(request.contaId())
+                .orElseThrow(() -> new ResourceNotFoundException("Conta", request.contaId()));
+
+        Categoria categoria = null;
+        if (request.categoriaId() != null) {
+            categoria = categoriaRepository.findById(request.categoriaId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Categoria", request.categoriaId()));
+        } else if (divida.getCategoria() != null) {
+            categoria = divida.getCategoria();
+        }
+
+        LocalDate dataPag = request.dataPagamento() != null ? request.dataPagamento() : LocalDate.now();
+        BigDecimal valorPago = request.valorPago();
+        int proximoNumero = (divida.getParcelas() != null ? divida.getParcelas().size() : 0) + 1;
+
+        ParcelaDivida recibo = ParcelaDivida.builder()
+                .numeroParcela(proximoNumero)
+                .valor(valorPago)
+                .dataVencimento(dataPag)
+                .dataPagamento(dataPag)
+                .status(StatusTransacao.PAGO)
+                .valorJuros(BigDecimal.ZERO)
+                .valorDesconto(BigDecimal.ZERO)
+                .build();
+        divida.adicionarParcela(recibo);
+
+        TipoTransacao tipoTx = divida.getTipo() == TipoDivida.A_RECEBER ? TipoTransacao.RECEITA : TipoTransacao.DESPESA;
+        String desc = (tipoTx == TipoTransacao.RECEITA ? "Recebimento: " : "Pagamento: ")
+                + divida.getDescricao() + " (Amortização #" + proximoNumero + ")";
+
+        com.gestao.financeiro.dto.request.TransacaoRequest txRequest = new com.gestao.financeiro.dto.request.TransacaoRequest(
+                desc,
+                valorPago,
+                dataPag,
+                dataPag,
+                tipoTx,
+                null,
+                categoria != null ? categoria.getId() : null,
+                conta.getId(),
+                null,
+                "Amortização livre #" + proximoNumero + " da dívida ID " + divida.getId(),
+                null,
+                false,
+                null,
+                YearMonth.from(dataPag),
+                StatusTransacao.PAGO,
+                null
+        );
+
+        com.gestao.financeiro.dto.response.TransacaoResponse txResponse = transacaoService.criar(txRequest);
+        recibo.setTransacaoGerada(transacaoRepository.getReferenceById(txResponse.id()));
+
+        if (divida.getPessoa() != null) {
+            divida.getPessoa().registrarPagamento(true);
+            pessoaRepository.save(divida.getPessoa());
+        }
+
+        divida.abaterValor(valorPago);
+        dividaRepository.save(divida);
+        recibo = parcelaRepository.save(recibo);
+
+        log.info("[tenant={}] Amortização livre registrada: dividaId={} valor={} restante={}",
+                divida.getTenantId(), divida.getId(), valorPago, divida.getValorRestante());
+
+        return dividaMapper.toParcelaResponse(recibo);
     }
 
     @Transactional

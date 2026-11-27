@@ -101,6 +101,21 @@ public class DividaController {
         return ApiResponse.ok(dividaService.pagarParcela(parcelaId, request));
     }
 
+    @PatchMapping("/parcelas/{parcelaId}/linha-digitavel")
+    public ApiResponse<ParcelaDividaResponse> atualizarLinhaDigitavel(
+            @PathVariable Long parcelaId,
+            @RequestBody java.util.Map<String, String> body) {
+        return ApiResponse.ok(dividaService.atualizarLinhaDigitavel(parcelaId, body.get("linhaDigitavel")));
+    }
+
+    @PostMapping("/{id}/amortizacoes")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<ParcelaDividaResponse> registrarAmortizacao(
+            @PathVariable Long id,
+            @Valid @RequestBody PagarParcelaDividaRequest request) {
+        return ApiResponse.created(dividaService.registrarAmortizacao(id, request));
+    }
+
     @PutMapping("/parcelas/pagar-lote")
     public ApiResponse<List<ParcelaDividaResponse>> pagarLote(
             @Valid @RequestBody PagarMultiplasParcelasRequest request) {

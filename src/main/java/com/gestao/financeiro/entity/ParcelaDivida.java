@@ -46,6 +46,17 @@ public class ParcelaDivida extends TenantEntity {
     @Column(name = "data_pagamento")
     private LocalDate dataPagamento;
 
+    @Column(name = "linha_digitavel", length = 120)
+    private String linhaDigitavel;
+
+    @Column(name = "valor_juros", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal valorJuros = BigDecimal.ZERO;
+
+    @Column(name = "valor_desconto", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal valorDesconto = BigDecimal.ZERO;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "transacao_id")
     private Transacao transacaoGerada; 

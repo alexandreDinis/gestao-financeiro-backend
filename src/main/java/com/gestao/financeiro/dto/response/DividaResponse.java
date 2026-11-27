@@ -1,5 +1,6 @@
 package com.gestao.financeiro.dto.response;
 
+import com.gestao.financeiro.entity.enums.ModalidadeDivida;
 import com.gestao.financeiro.entity.enums.Periodicidade;
 import com.gestao.financeiro.entity.enums.StatusDivida;
 import com.gestao.financeiro.entity.enums.TipoDivida;
@@ -18,6 +19,8 @@ public record DividaResponse(
         String categoriaCor,
         String descricao,
         TipoDivida tipo,
+        ModalidadeDivida modalidade,
+        String credor,
         BigDecimal valorTotal,
         BigDecimal valorRestante,
         LocalDate dataInicio,
@@ -33,4 +36,3 @@ public record DividaResponse(
         Integer diaVencimento,
         BigDecimal valorParcelaRecorrente
 ) {}
-
