@@ -96,29 +96,36 @@ public class PrevisaoCaixaService {
 
 
 
-            // 2. Dívidas entre Pessoas (considera TODAS as parcelas programadas do mês: PAGAS e PENDENTES)
-            BigDecimal entradasDividas = nvl(parcelaDividaRepository.somarTodasParcelasPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_RECEBER));
-            BigDecimal saidasDividas = nvl(parcelaDividaRepository.somarTodasParcelasPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_PAGAR));
+            // 2. Dívidas entre Pessoas (considera parcelas programadas, exceto dívidas pausadas por inadimplência)
+            BigDecimal entradasDividas = BigDecimal.ZERO;
+            BigDecimal saidasDividas = BigDecimal.ZERO;
 
             List<com.gestao.financeiro.entity.ParcelaDivida> listDividasReceber = parcelaDividaRepository.findTodasParcelasPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_RECEBER);
             for (com.gestao.financeiro.entity.ParcelaDivida pd : listDividasReceber) {
+                if (Boolean.TRUE.equals(pd.getDivida().getPausarPrevisao())) continue;
+                BigDecimal val = nvl(pd.getValor());
+                entradasDividas = entradasDividas.add(val);
                 String pessoaNome = pd.getDivida().getPessoa() != null ? pd.getDivida().getPessoa().getNome() : "Pessoa";
                 String desc = pessoaNome + " - " + pd.getDivida().getDescricao();
-                detalhamentoReceitas.add(new ItemPrevisaoDetalhamentoDTO(desc, nvl(pd.getValor()), "DIVIDA"));
+                detalhamentoReceitas.add(new ItemPrevisaoDetalhamentoDTO(desc, val, "DIVIDA"));
             }
 
             List<com.gestao.financeiro.entity.ParcelaDivida> listDividasPagar = parcelaDividaRepository.findTodasParcelasPorPeriodoETipo(tenantId, inicio, fim, TipoDivida.A_PAGAR);
             for (com.gestao.financeiro.entity.ParcelaDivida pd : listDividasPagar) {
+                if (Boolean.TRUE.equals(pd.getDivida().getPausarPrevisao())) continue;
+                BigDecimal val = nvl(pd.getValor());
+                saidasDividas = saidasDividas.add(val);
                 String desc = pd.getDivida().getDescricao();
                 if (pd.getNumeroParcela() != null) {
                     desc += " (Parcela " + pd.getNumeroParcela() + ")";
                 }
                 desc += " [Dívida]";
-                detalhamentoDespesas.add(new ItemPrevisaoDetalhamentoDTO(desc, nvl(pd.getValor()), "DIVIDA"));
+                detalhamentoDespesas.add(new ItemPrevisaoDetalhamentoDTO(desc, val, "DIVIDA"));
             }
 
             // 2b. Projeta dívidas recorrentes ativas que ainda não possuem parcela física gerada para o mês ref
             for (com.gestao.financeiro.entity.Divida d : dividasRecorrentes) {
+                if (Boolean.TRUE.equals(d.getPausarPrevisao())) continue;
                 if (d.getDataInicio() != null && YearMonth.from(d.getDataInicio()).isAfter(ref)) continue;
                 if (d.getDataFim() != null && YearMonth.from(d.getDataFim()).isBefore(ref)) continue;
 
@@ -140,6 +147,7 @@ public class PrevisaoCaixaService {
 
             // 2c. Projeta dívidas SALDO_ABERTO com parcela mensal de referência até esgotar o valorRestante
             for (com.gestao.financeiro.entity.Divida d : dividasSaldoAberto) {
+                if (Boolean.TRUE.equals(d.getPausarPrevisao())) continue;
                 BigDecimal restante = saldoAbertoRestanteMap.getOrDefault(d.getId(), BigDecimal.ZERO);
                 BigDecimal refMensal = nvl(d.getValorParcelaRecorrente());
                 if (restante.compareTo(BigDecimal.ZERO) <= 0 || refMensal.compareTo(BigDecimal.ZERO) <= 0) continue;

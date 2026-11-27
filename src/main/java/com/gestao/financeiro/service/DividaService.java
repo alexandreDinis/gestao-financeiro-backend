@@ -447,6 +447,16 @@ public class DividaService {
     }
 
     @Transactional
+    public DividaResponse togglePausarPrevisao(Long id, Boolean pausar) {
+        Divida divida = findById(id);
+        boolean novoValor = pausar != null ? pausar : !Boolean.TRUE.equals(divida.getPausarPrevisao());
+        divida.setPausarPrevisao(novoValor);
+        divida = dividaRepository.save(divida);
+        log.info("[tenant={}] Dívida id={} pausarPrevisao={}", divida.getTenantId(), id, novoValor);
+        return dividaMapper.toResponse(divida);
+    }
+
+    @Transactional
     public ParcelaDividaResponse registrarAmortizacao(Long dividaId, PagarParcelaDividaRequest request) {
         Divida divida = findById(dividaId);
 
