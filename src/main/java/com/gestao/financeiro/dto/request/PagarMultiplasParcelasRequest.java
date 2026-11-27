@@ -18,5 +18,7 @@ public record PagarMultiplasParcelasRequest(
 
         LocalDate dataPagamento,
 
-        BigDecimal desconto
+        BigDecimal desconto,
+
+        BigDecimal juros
 ) {}

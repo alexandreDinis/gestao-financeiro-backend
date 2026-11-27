@@ -582,24 +582,45 @@ public class DividaService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         BigDecimal desconto = request.desconto() != null ? request.desconto() : BigDecimal.ZERO;
+        BigDecimal juros = request.juros() != null ? request.juros() : BigDecimal.ZERO;
         if (desconto.compareTo(BigDecimal.ZERO) < 0) {
             throw new BusinessException("O desconto não pode ser negativo.");
         }
-        if (desconto.compareTo(totalOriginal) >= 0) {
-            throw new BusinessException("O desconto não pode ser maior ou igual ao valor total das parcelas.");
+        if (juros.compareTo(BigDecimal.ZERO) < 0) {
+            throw new BusinessException("O valor de juros não pode ser negativo.");
         }
 
-        BigDecimal totalComDesconto = totalOriginal.subtract(desconto);
+        BigDecimal totalFinal = totalOriginal.add(juros).subtract(desconto);
+        if (totalFinal.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("O valor final após desconto deve ser maior que zero.");
+        }
 
         // 4. Ordenar parcelas por número
         List<ParcelaDivida> parcelasOrdenadas = parcelas.stream()
                 .sorted((a, b) -> Integer.compare(a.getNumeroParcela(), b.getNumeroParcela()))
                 .toList();
 
-        // Descrição com range de parcelas
-        String rangeParcelas = parcelasOrdenadas.size() == 1
-                ? "Parcela " + parcelasOrdenadas.get(0).getNumeroParcela()
-                : "Parcelas " + parcelasOrdenadas.get(0).getNumeroParcela() + "-" + parcelasOrdenadas.get(parcelasOrdenadas.size() - 1).getNumeroParcela();
+        // Descrição inteligente: usa range (ex: 13-15) apenas se forem contíguas; senão lista (#3, #15)
+        String rangeParcelas;
+        if (parcelasOrdenadas.size() == 1) {
+            rangeParcelas = "Parcela " + parcelasOrdenadas.get(0).getNumeroParcela();
+        } else {
+            boolean contiguas = true;
+            for (int i = 1; i < parcelasOrdenadas.size(); i++) {
+                if (parcelasOrdenadas.get(i).getNumeroParcela() != parcelasOrdenadas.get(i - 1).getNumeroParcela() + 1) {
+                    contiguas = false;
+                    break;
+                }
+            }
+            if (contiguas) {
+                rangeParcelas = "Parcelas " + parcelasOrdenadas.get(0).getNumeroParcela() + "-" + parcelasOrdenadas.get(parcelasOrdenadas.size() - 1).getNumeroParcela();
+            } else {
+                String lista = parcelasOrdenadas.stream()
+                        .map(p -> "#" + p.getNumeroParcela())
+                        .collect(java.util.stream.Collectors.joining(", "));
+                rangeParcelas = "Parcelas " + lista;
+            }
+        }
 
         // 5. Gerar UMA transação para o lote
         TipoTransacao tipoTx = divida.getTipo() == TipoDivida.A_RECEBER ? TipoTransacao.RECEITA : TipoTransacao.DESPESA;
@@ -608,10 +629,13 @@ public class DividaService {
         if (desconto.compareTo(BigDecimal.ZERO) > 0) {
             obs += " — Desconto: R$ " + desconto.setScale(2, RoundingMode.HALF_UP);
         }
+        if (juros.compareTo(BigDecimal.ZERO) > 0) {
+            obs += " — Juros/Multa: R$ " + juros.setScale(2, RoundingMode.HALF_UP);
+        }
 
         com.gestao.financeiro.dto.request.TransacaoRequest txRequest = new com.gestao.financeiro.dto.request.TransacaoRequest(
                 desc,
-                totalComDesconto,
+                totalFinal,
                 dataPag,
                 parcelasOrdenadas.get(0).getDataVencimento(), // vencimento da primeira parcela
                 tipoTx,
@@ -631,10 +655,26 @@ public class DividaService {
         com.gestao.financeiro.dto.response.TransacaoResponse txResponse = transacaoService.criar(txRequest);
         Transacao txRef = transacaoRepository.getReferenceById(txResponse.id());
 
-        // 6. Marcar todas as parcelas como pagas
-        for (ParcelaDivida p : parcelasOrdenadas) {
+        // 6. Marcar todas as parcelas como pagas e registrar desconto/juros rateados (para KPIs de economia/juros)
+        BigDecimal descontoRestante = desconto;
+        BigDecimal jurosRestante = juros;
+        int totalQtd = parcelasOrdenadas.size();
+        for (int i = 0; i < totalQtd; i++) {
+            ParcelaDivida p = parcelasOrdenadas.get(i);
+            boolean isLast = (i == totalQtd - 1);
+            BigDecimal descParcela = isLast
+                    ? descontoRestante
+                    : desconto.divide(BigDecimal.valueOf(totalQtd), 2, RoundingMode.HALF_UP);
+            BigDecimal jurosParcela = isLast
+                    ? jurosRestante
+                    : juros.divide(BigDecimal.valueOf(totalQtd), 2, RoundingMode.HALF_UP);
+            descontoRestante = descontoRestante.subtract(descParcela);
+            jurosRestante = jurosRestante.subtract(jurosParcela);
+
             p.setStatus(StatusTransacao.PAGO);
             p.setDataPagamento(dataPag);
+            p.setValorDesconto(descParcela);
+            p.setValorJuros(jurosParcela);
             p.setTransacaoGerada(txRef);
             parcelaRepository.save(p);
         }
@@ -648,17 +688,16 @@ public class DividaService {
             pessoaRepository.save(pessoa);
         }
 
-        // 8. Abater dívida — usar totalComDesconto (valor real pago)
+        // 8. Abater dívida pelo valor ORIGINAL integral das parcelas quitadas (desconto é economia, juros não reduzem principal)
         divida.abaterValor(totalOriginal);
-        // Se houve desconto, o valor restante pode ficar negativo, ajustamos
-        if (divida.getValorRestante().compareTo(BigDecimal.ZERO) < 0) {
+        if (divida.getValorRestante().compareTo(BigDecimal.ZERO) <= 0) {
             divida.setValorRestante(BigDecimal.ZERO);
             divida.setStatus(StatusDivida.PAGA);
         }
         dividaRepository.save(divida);
 
-        log.info("[tenant={}] Pagamento em lote: {} parcelas da dívida id={} — total={} desconto={} pago={}",
-                divida.getTenantId(), parcelas.size(), divida.getId(), totalOriginal, desconto, totalComDesconto);
+        log.info("[tenant={}] Pagamento em lote: {} parcelas da dívida id={} — original={} desconto={} juros={} pago={}",
+                divida.getTenantId(), parcelas.size(), divida.getId(), totalOriginal, desconto, juros, totalFinal);
 
         return parcelasOrdenadas.stream()
                 .map(dividaMapper::toParcelaResponse)
