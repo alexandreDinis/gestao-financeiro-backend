@@ -219,13 +219,35 @@ public class DashboardService {
         Long tenantId = com.gestao.financeiro.config.TenantContext.getTenantId();
         List<Vencimento> vencimentosMes = getTodosVencimentos(tenantId, hoje.getMonthValue(), hoje.getYear());
 
-        BigDecimal despPend = vencimentosMes.stream()
+        // Exclui da projeção financeira do mês as dívidas marcadas como pausarPrevisao (inadimplentes),
+        // mantendo-as visíveis apenas em Contas a Pagar/Receber para controle de cobrança.
+        List<Divida> dividasPausadas = dividaRepository.findByPausarPrevisaoTrue();
+        Set<Long> pausedDividaIds = dividasPausadas.stream().map(Divida::getId).collect(Collectors.toSet());
+        Set<Long> pausedParcelaIds = dividasPausadas.stream()
+                .flatMap(d -> d.getParcelas().stream())
+                .map(ParcelaDivida::getId)
+                .collect(Collectors.toSet());
+
+        List<Vencimento> vencimentosProjetaveis = vencimentosMes.stream()
+                .filter(v -> {
+                    String id = v.idUnico() != null ? v.idUnico() : "";
+                    if (id.startsWith("SALDO-ABERTO-") && v.parcelaId() != null && pausedDividaIds.contains(v.parcelaId())) {
+                        return false;
+                    }
+                    if (id.startsWith("PARCELA-DIVIDA-") && v.parcelaId() != null && pausedParcelaIds.contains(v.parcelaId())) {
+                        return false;
+                    }
+                    return true;
+                })
+                .toList();
+
+        BigDecimal despPend = vencimentosProjetaveis.stream()
                 .filter(v -> v.tipo() == com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA)
                 .map(Vencimento::valor)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(2, RoundingMode.HALF_UP);
 
-        BigDecimal recPend = vencimentosMes.stream()
+        BigDecimal recPend = vencimentosProjetaveis.stream()
                 .filter(v -> v.tipo() == com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA)
                 .map(Vencimento::valor)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
@@ -393,7 +415,9 @@ public class DashboardService {
                 t.getTipo() == TipoTransacao.RECEITA ? com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA : com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
                 atrasado,
                 venceHoje,
-                t.getValorPrevisto()
+                t.getValorPrevisto(),
+                null,
+                false
         );
     }
 
@@ -420,7 +444,9 @@ public class DashboardService {
                 com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
                 atrasado,
                 venceHoje,
-                null // Parcela de cartão não tem valorPrevisto diretamente
+                null, // Parcela de cartão não tem valorPrevisto diretamente
+                null,
+                false
         );
     }
 
@@ -445,7 +471,9 @@ public class DashboardService {
                 p.getDivida().getTipo() == TipoDivida.A_RECEBER ? com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA : com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
                 atrasado,
                 venceHoje,
-                null // Parcela de dívida não tem valorPrevisto
+                null, // Parcela de dívida não tem valorPrevisto
+                p.getDivida().getId(),
+                Boolean.TRUE.equals(p.getDivida().getPausarPrevisao())
         );
     }
 
@@ -471,7 +499,9 @@ public class DashboardService {
                 com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
                 atrasado,
                 venceHoje,
-                null
+                null,
+                null,
+                false
         );
     }
 
@@ -612,7 +642,9 @@ public class DashboardService {
                                     : com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
                             atrasado,
                             venceHoje,
-                            refMensal
+                            refMensal,
+                            d.getId(),
+                            Boolean.TRUE.equals(d.getPausarPrevisao())
                     ));
                 }
 
@@ -676,7 +708,8 @@ public class DashboardService {
                         v.idUnico(), v.transacaoId(), v.parcelaId(), v.contaId(),
                         v.descricao(), v.valor().add(extra), v.dataVencimento(),
                         v.diasRestantes(), v.conta(), v.origem(), v.tipo(),
-                        v.atrasado(), v.venceHoje(), v.valorPrevisto() != null ? v.valorPrevisto().add(extra) : extra
+                        v.atrasado(), v.venceHoje(), v.valorPrevisto() != null ? v.valorPrevisto().add(extra) : extra,
+                        v.dividaId(), v.pausarPrevisao()
                     ));
                     handledKeys.add(key);
                     continue;
@@ -712,7 +745,9 @@ public class DashboardService {
                     com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
                     vencimento.isBefore(hoje),
                     vencimento.isEqual(hoje),
-                    entry.getValue()
+                    entry.getValue(),
+                    null,
+                    false
                 ));
             }
         }
@@ -910,7 +945,9 @@ public class DashboardService {
                             rec.getTipo() == TipoTransacao.RECEITA ? com.gestao.financeiro.entity.enums.TipoMovimentacao.RECEITA : com.gestao.financeiro.entity.enums.TipoMovimentacao.DESPESA,
                             atrasado,
                             venceHoje,
-                            rec.getValor()
+                            rec.getValor(),
+                            null,
+                            false
                         ));
                     }
                 }

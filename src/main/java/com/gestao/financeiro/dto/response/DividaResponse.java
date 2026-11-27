@@ -34,5 +34,6 @@ public record DividaResponse(
         Boolean recorrente,
         Periodicidade periodicidade,
         Integer diaVencimento,
-        BigDecimal valorParcelaRecorrente
+        BigDecimal valorParcelaRecorrente,
+        Boolean pausarPrevisao
 ) {}

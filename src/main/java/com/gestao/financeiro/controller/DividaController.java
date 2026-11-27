@@ -116,6 +116,14 @@ public class DividaController {
         return ApiResponse.created(dividaService.registrarAmortizacao(id, request));
     }
 
+    @PatchMapping("/{id}/pausar-previsao")
+    public ApiResponse<DividaResponse> togglePausarPrevisao(
+            @PathVariable Long id,
+            @RequestBody(required = false) java.util.Map<String, Boolean> body) {
+        Boolean pausar = body != null ? body.get("pausarPrevisao") : null;
+        return ApiResponse.ok(dividaService.togglePausarPrevisao(id, pausar));
+    }
+
     @PutMapping("/parcelas/pagar-lote")
     public ApiResponse<List<ParcelaDividaResponse>> pagarLote(
             @Valid @RequestBody PagarMultiplasParcelasRequest request) {
